@@ -228,6 +228,16 @@ Against the brief, in order of how much it matters next:
 7. **Signing throughput**: signing happens in the single data-plane loop, not a worker pool. That
    was fine at 30/s (about 75 notifications/s) but was not measured beyond that.
 
+## Scalpels catalog status
+
+Sesame has a **Hidden, listing-only** row proposed in `artisan-build/scalpels.app`
+(branch `feat/catalog-sesame`): a Marketplace product page and Hidden docs at
+`resources/docs/sesame/`, modelled on the Ghost listing. The manifest declares
+PHP 8.5, Postgres and the scheduler but no commands or keys, so it is not an
+install path. It names `artisan-build/sesame` as the repository, which does not
+exist on GitHub yet; the source lives on this Amp project remote until that is
+decided. Promotion out of Hidden waits on the items under "What is not done".
+
 ## Operating notes
 
 - Sesame needs HTTPS for its certificate URL. Locally, `octane:frankenphp --https` with

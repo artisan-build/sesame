@@ -1,13 +1,14 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "artisan-build/laravel-nodeless",
+    "name": "artisan-build/sesame",
     "type": "project",
-    "description": "A Laravel Livewire starter kit with no Node, npm, Vite, or frontend build step.",
+    "description": "Sesame: a simulated Amazon SES (v2 SendEmail plus signed SNS notifications) for staging load runs.",
     "keywords": [
         "laravel",
-        "framework",
-        "livewire",
-        "nodeless"
+        "ses",
+        "sns",
+        "simulator",
+        "load-testing"
     ],
     "license": "MIT",
     "require": {
