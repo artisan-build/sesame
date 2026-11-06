@@ -66,22 +66,47 @@ class CrmReconcile extends Command
             }
             $after = $page['next'];
         } while ($after !== null);
-        foreach ($crm->keys() as $orphan) {
-            $mismatches[] = ['message_id' => $orphan, 'problem' => 'CRM has a MessageId the simulator never accepted'];
+        // MessageIds Sesame returned but has no truth for. Sesame acknowledges a
+        // send before it reaches Postgres, so a deploy or instance loss can
+        // lose it: that is the simulator's loss and is reported apart from CRM
+        // mismatches. Anything Sesame does not recognise is still a CRM finding.
+        $lost = [];
+        $undrained = 0;
+        foreach ($crm->keys()->chunk(5000) as $chunk) {
+            $classified = $http->post("{$base}/sesame/v1/runs/{$runId}/missing", ['message_ids' => $chunk->values()->all()])->throw()->json('message_ids');
+            foreach ($chunk as $orphan) {
+                $status = $classified[$orphan]['status'] ?? 'unknown';
+                match ($status) {
+                    'lost' => $lost[] = ['message_id' => $orphan] + $classified[$orphan],
+                    'undrained' => $undrained++,
+                    default => $mismatches[] = ['message_id' => $orphan, 'problem' => 'CRM has a MessageId the simulator never accepted'],
+                };
+            }
         }
+        $drained = $drained && $undrained === 0;
 
         $report = [
             'drained' => $drained,
             'simulator' => $summary,
             'crm' => $this->crmMetrics($label),
             'reconciliation' => ['messages_compared' => $seen, 'mismatches' => count($mismatches), 'examples' => array_slice($mismatches, 0, 20)],
+            // Not CRM findings: sends Sesame acknowledged and then lost with an ingest buffer.
+            'simulator_losses' => ['lost_in_ingest_buffer' => count($lost), 'undrained' => $undrained, 'examples' => array_slice($lost, 0, 20)],
         ];
         if ($this->option('json')) {
             file_put_contents((string) $this->option('json'), json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         }
-        $this->line((string) json_encode(['drained' => $drained, 'crm' => $report['crm'], 'reconciliation' => $report['reconciliation']], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        $this->line((string) json_encode(['drained' => $drained, 'crm' => $report['crm'], 'reconciliation' => $report['reconciliation'], 'simulator_losses' => $report['simulator_losses']], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        if ($lost !== []) {
+            $this->warn(count($lost).' accepted send(s) were lost in a Sesame ingest buffer (deploy or instance loss during the run). Not a CRM finding; the run is incomplete.');
+        }
 
-        return $drained && $mismatches === [] ? self::SUCCESS : self::FAILURE;
+        // 1: the CRM disagrees with the truth. 2: only the simulator lost sends.
+        return match (true) {
+            ! $drained || $mismatches !== [] => self::FAILURE,
+            $lost !== [] => 2,
+            default => self::SUCCESS,
+        };
     }
 
     /**

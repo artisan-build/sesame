@@ -14,6 +14,7 @@
     "require": {
         "php": "^8.3",
         "aws/aws-php-sns-message-validator": "^1.10",
+        "aws/aws-sdk-php": "^3.403",
         "laravel/chisel": "^0.1.0",
         "laravel/fortify": "^1.37.2",
         "laravel/framework": "^13.19",
@@ -24,7 +25,6 @@
         "livewire/livewire": "^4.1"
     },
     "require-dev": {
-        "aws/aws-sdk-php": "^3.403",
         "barryvdh/laravel-ide-helper": "^3.6",
         "driftingly/rector-laravel": "^2.1 <2.6",
         "fakerphp/faker": "^1.24",

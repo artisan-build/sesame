@@ -20,22 +20,32 @@ return [
     // Simulated AWS region and account number used in ARNs.
     'region' => env('SESAME_REGION', 'us-east-1'),
 
-    'wal' => [
-        // Write-ahead log: every accepted SendEmail is appended here before the
-        // MessageId is returned and before any database write.
-        'path' => env('SESAME_WAL_PATH', storage_path('sesame/wal')),
-        // fsync each append. Turning it off trades crash durability for latency.
-        'fsync' => (bool) env('SESAME_WAL_FSYNC', true),
-        // Config snapshot the ingest workers read; refreshed by the data plane
-        // on Postgres LISTEN/NOTIFY.
-        'snapshot' => env('SESAME_SNAPSHOT_PATH', storage_path('sesame/accounts.json')),
+    'buffer' => [
+        // Per-instance SQLite ingest buffer. It lives in the temporary
+        // directory on purpose: Laravel Cloud replaces it on every deploy and
+        // reboot, and Sesame drains it to Postgres within moments of each
+        // send, so nothing here is meant to outlive the instance. Sends not
+        // yet drained when the instance goes are lost; see IngestBuffer.
+        'path' => env('SESAME_BUFFER_PATH', sys_get_temp_dir().'/sesame/buffer.sqlite'),
     ],
 
-    'dataplane' => [
-        'tick_ms' => 20,
-        'ingest_batch' => 2000,
-        'delivery_concurrency' => 32,
-        'delivery_timeout_seconds' => 15,
+    // How long an instance may reuse an account row before reading it again.
+    // Control-plane changes reach every replica within this window.
+    'account_cache_ms' => (int) env('SESAME_ACCOUNT_CACHE_MS', 1000),
+
+    'delivery' => [
+        // The scheduler sweeps due events every second and leases them to
+        // queued DeliverEvents jobs in batches of this size.
+        'batch' => 25,
+        // Upper bound on events one sweep hands out.
+        'sweep_limit' => 5000,
+        // A lease that is not settled in this long is handed out again, so a
+        // lost or crashed job only delays its events. Must exceed the job's
+        // worst case (timeout + drain margin).
+        'lease_seconds' => 60,
+        // Concurrent POSTs inside one job.
+        'concurrency' => 25,
+        'timeout_seconds' => 15,
         // SNS default HTTP delivery policy: 3 retries, 20 s apart, linear.
         'retry' => ['retries' => 3, 'delay_seconds' => 20],
     ],

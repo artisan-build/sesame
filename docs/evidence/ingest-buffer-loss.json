@@ -1,0 +1,115 @@
+{
+  "recorded": "2026-11-06",
+  "host": "Amp orb, 2 vCPU, 4 GB; vegeta, Postgres 15 and the server on the same CPUs",
+  "server": {
+    "octane": "php artisan octane:frankenphp --workers=4 (FrankenPHP 1.13.5, PHP 8.5.12, laravel/octane 2.23)",
+    "per_request": "frankenphp php-server --root public (classic mode, no memory between requests, like PHP-FPM)"
+  },
+  "payload": "bench/targets.php: 1,000 distinct ses-v2 SendEmail requests, ~24 KB MIME",
+  "runs": {
+    "octane_30rps_60s": {
+      "requests": 1800,
+      "success": 1,
+      "latency_ms": {
+        "50th": 3.5,
+        "95th": 4.58,
+        "99th": 5.72,
+        "max": 10.36
+      },
+      "buffer_depth_10ms_samples": {
+        "samples": 6083,
+        "max": 1,
+        "p50": 0,
+        "p99": 1,
+        "nonzero_frac": 0.0965
+      },
+      "acked_not_in_postgres": 0
+    },
+    "octane_300rps_120s": {
+      "requests": 36000,
+      "success": 1,
+      "latency_ms": {
+        "50th": 3.15,
+        "95th": 9.28,
+        "99th": 148.98,
+        "max": 292.87
+      },
+      "buffer_depth_10ms_samples": {
+        "samples": 11825,
+        "max": 30,
+        "p50": 1,
+        "p99": 5,
+        "nonzero_frac": 0.7782
+      },
+      "acked_not_in_postgres": 0
+    },
+    "per_request_30rps_50s": {
+      "requests": 1500,
+      "success": 1,
+      "latency_ms": {
+        "50th": 10.55,
+        "95th": 13.88,
+        "99th": 22.79,
+        "max": 56.31
+      },
+      "acked_not_in_postgres": 0
+    }
+  },
+  "kill_tests": {
+    "method": "vegeta 10 s at the given rate; after 5 s SIGKILL every server process and delete the buffer directory (a deploy or instance loss); systemd restarts the server with an empty tmp dir; compare 200-acknowledged MessageIds with sesame_messages",
+    "rate_30": [
+      {
+        "acked": 212,
+        "lost": 0
+      },
+      {
+        "acked": 215,
+        "lost": 0
+      },
+      {
+        "acked": 225,
+        "lost": 0
+      }
+    ],
+    "rate_300": [
+      {
+        "acked": 2142,
+        "lost": 1
+      },
+      {
+        "acked": 2155,
+        "lost": 0
+      },
+      {
+        "acked": 2120,
+        "lost": 0
+      },
+      {
+        "acked": 2180,
+        "lost": 2
+      },
+      {
+        "acked": 2249,
+        "lost": 3
+      },
+      {
+        "acked": 2116,
+        "lost": 1
+      },
+      {
+        "acked": 2102,
+        "lost": 1
+      },
+      {
+        "acked": 2173,
+        "lost": 0
+      },
+      {
+        "acked": 2262,
+        "lost": 0
+      }
+    ],
+    "classification": "Both losses whose MessageIds were captured were reported by IngestBuffer::lossFor() as status=lost, seq = drained_through + 1 of the replaced buffer. (The first five 300/s runs did not capture IDs.)",
+    "not_measured": "Loss when the after-response drain does not run (Postgres down, process killed in the deferred callback): then only the scheduled per-second drain empties the buffer, so up to ~1 s of sends (about 30 at 30/s) plus whatever accumulated while Postgres was unreachable."
+  }
+}

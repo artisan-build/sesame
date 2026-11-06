@@ -92,6 +92,16 @@ final class Accounts
             'subscription_requested_at' => now(),
             'subscription_confirmed_at' => null,
         ])->save();
+
+        // One SubscriptionConfirmation per subscription token, due now. The
+        // sweeper delivers it even though the subscription is still pending;
+        // every other event for the account waits until it is confirmed.
+        $now = now();
+        DB::table('sesame_events')->insert([
+            'id' => (string) Str::uuid7(), 'sns_message_id' => (string) Str::uuid(), 'account_id' => $account->id,
+            'type' => 'SubscriptionConfirmation', 'due_at' => $now, 'status' => 'pending', 'attempts' => 0, 'created_at' => $now,
+            'payload' => json_encode(['Token' => $account->subscription_token, 'TopicArn' => $account->topic_arn]),
+        ]);
     }
 
     public static function confirm(SesameAccount $account, string $token, string $topicArn): bool

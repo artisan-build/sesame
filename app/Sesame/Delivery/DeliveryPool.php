@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Sesame\Dataplane;
+namespace App\Sesame\Delivery;
 
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\TransferException;
@@ -11,9 +11,8 @@ use Illuminate\Support\Sleep;
 use Psr\Http\Message\ResponseInterface;
 
 /**
- * A fixed pool of concurrent HTTP POSTs driven without blocking: the data
- * plane loop calls tick() and reads finished attempts back, each timed from
- * request start to response.
+ * Concurrent HTTP POSTs for one delivery job, each timed from request start
+ * to response. The job posts a batch and drains it.
  */
 final class DeliveryPool
 {
@@ -38,6 +37,11 @@ final class DeliveryPool
             'connect_timeout' => min(5.0, $timeoutSeconds),
             'verify' => true,
         ]);
+    }
+
+    public static function fromConfig(): self
+    {
+        return new self((int) config('sesame.delivery.concurrency'), (float) config('sesame.delivery.timeout_seconds'));
     }
 
     public function capacity(): int

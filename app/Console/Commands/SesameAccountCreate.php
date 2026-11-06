@@ -27,7 +27,7 @@ class SesameAccountCreate extends Command
             $this->option('max-rate') !== null ? (int) $this->option('max-rate') : null,
             $this->option('seed') !== null ? (int) $this->option('seed') : null,
         );
-        AccountDirectory::write();
+        AccountDirectory::forget();
         $account = $created['account'];
 
         $out = [

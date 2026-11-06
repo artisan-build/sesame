@@ -4,38 +4,41 @@ use App\CrmHarness\LoadContacts;
 use App\CrmHarness\SendLoadMessage;
 use App\Models\SesameAccount;
 use App\Sesame\Accounts;
-use App\Sesame\Dataplane\Dataplane;
-use App\Sesame\Dataplane\DeliveryPool;
+use App\Sesame\Delivery\DeliverEvents;
+use App\Sesame\Delivery\DeliveryPool;
+use App\Sesame\Delivery\Sweeper;
 use App\Sesame\Ingest\AccountDirectory;
+use App\Sesame\Ingest\IngestBuffer;
 use Aws\Sns\MessageValidator;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Sleep;
-use Tests\TestCase;
 
 /*
  * The whole loop in one process: harness send job -> Laravel Mailable ->
- * stock ses-v2 transport -> Sesame SendEmail -> WAL -> data plane -> signed
- * SNS POST -> harness webhook (real MessageValidator) -> queued processing ->
- * reconciliation against Sesame's ground truth.
+ * stock ses-v2 transport -> Sesame SendEmail -> SQLite ingest buffer -> drain
+ * to Postgres -> sweep -> queued DeliverEvents -> signed SNS POST -> harness
+ * webhook (real MessageValidator) -> queued processing -> reconciliation
+ * against Sesame's ground truth.
  */
-beforeEach(function (): void {
+beforeEach(function () {
     sesameSetUp();
     $test = $this;
     // The harness's outbound HTTP (SubscribeURL GET, truth API) reaches Sesame in-process.
     Http::fake(['sesame.test/*' => function ($request) use ($test) {
         $uri = parse_url($request->url());
         $response = $test->withHeaders(array_map(fn ($v) => implode(', ', $v), $request->headers()))
-            ->get($uri['path'].(isset($uri['query']) ? '?'.$uri['query'] : ''));
+            ->json($request->method(), $uri['path'].(isset($uri['query']) ? '?'.$uri['query'] : ''), $request->data());
 
         return Http::response($response->getContent(), $response->getStatusCode(), ['Content-Type' => $response->headers->get('Content-Type')]);
     }]);
     config([
         'services.ses.endpoint' => 'https://sesame.test',
         'mail.mailers.crm-ses.http_handler' => inProcessHandler($this, true),
-        'sesame.dataplane.retry' => ['retries' => 3, 'delay_seconds' => 0.05],
+        'sesame.delivery.retry' => ['retries' => 3, 'delay_seconds' => 0.05],
     ]);
 });
 
@@ -49,7 +52,7 @@ function connectHarness(array $rates = [], int $seed = 11): SesameAccount
         // Compressed to zero so the test does not wait on the clock.
         'timing_overrides' => ['delivery' => [0, 0], 'bounce' => [0, 0], 'complaint' => [0, 0], 'delay_final' => [0, 0]],
     ])->save();
-    AccountDirectory::write();
+    AccountDirectory::forget();
     $path = tempnam(sys_get_temp_dir(), 'creds');
     file_put_contents($path, json_encode(['run_id' => $account->current_run_id] + $created));
     Artisan::call('crm:harness:connect', ['credentials' => $path]);
@@ -57,39 +60,26 @@ function connectHarness(array $rates = [], int $seed = 11): SesameAccount
     return $account->refresh();
 }
 
-function runDataplane(TestCase $test, float $seconds = 15, ?Dataplane $dataplane = null): Dataplane
-{
-    $dataplane ??= new Dataplane(new DeliveryPool(16, 5, inProcessHandler($test)));
-    $dataplane->boot();
-    $deadline = microtime(true) + $seconds;
-    $settled = 0;
-    while (microtime(true) < $deadline) {
-        $dataplane->reloadAccounts(); // NOTIFY never fires inside the test transaction
-        $worked = $dataplane->tick();
-        $settled = ($worked || $dataplane->pending() > 0) ? 0 : $settled + 1;
-        if ($settled >= 5) {
-            break;
-        }
-        Sleep::usleep(5000);
-    }
-
-    return $dataplane;
-}
-
 function sendLoad(int $count, string $run = 'test-run'): void
 {
     LoadContacts::seed($count);
     foreach (DB::table('harness_contacts')->orderBy('id')->limit($count)->pluck('id') as $contactId) {
-        dispatch(new SendLoadMessage(DB::table('harness_outbound_messages')->insertGetId(['contact_id' => $contactId, 'load_run' => $run, 'dispatched_at' => now()])));
+        SendLoadMessage::dispatch(DB::table('harness_outbound_messages')->insertGetId(['contact_id' => $contactId, 'load_run' => $run, 'dispatched_at' => now()]));
     }
 }
 
-it('confirms the subscription before delivering anything', function (): void {
+it('delivers through the container-built pool a queue worker gets', function () {
+    config(['sesame.delivery.concurrency' => 7]);
+
+    expect(app(DeliveryPool::class)->capacity())->toBe(7);
+});
+
+it('confirms the subscription before delivering anything', function () {
     $account = connectHarness();
     sendLoad(3);
 
     expect($account->subscription_status)->toBe('pending');
-    runDataplane($this);
+    runDelivery($this);
 
     $account->refresh();
     expect($account->subscription_status)->toBe('confirmed')
@@ -98,11 +88,11 @@ it('confirms the subscription before delivering anything', function (): void {
         ->and(DB::table('sesame_events')->where('type', '<>', 'SubscriptionConfirmation')->where('status', '<>', 'delivered')->count())->toBe(0);
 });
 
-it('closes the loop with every event reconciled, including forced bounces and complaints', function (): void {
+it('closes the loop with every event reconciled, including forced bounces and complaints', function () {
     connectHarness(['duplicate' => 30, 'out_of_order' => 30, 'delay' => 20, 'soft_bounce' => 10]);
     sendLoad(1000); // contact 200, 400, ... force bounces; 500 and 1000 force complaints
 
-    runDataplane($this, 60);
+    runDelivery($this, 60);
 
     expect(DB::table('harness_outbound_messages')->where('state', 'accepted')->count())->toBe(1000);
     $exit = Artisan::call('crm:reconcile', ['--json' => $report = tempnam(sys_get_temp_dir(), 'rec')]);
@@ -120,29 +110,29 @@ it('closes the loop with every event reconciled, including forced bounces and co
         ->and(DB::table('harness_message_events')->count())->toBe(DB::table('sesame_events')->whereNull('duplicate_of')->where('type', '<>', 'SubscriptionConfirmation')->count());
 });
 
-it('catches a CRM that loses events: a webhook answering 403 drops them and reconciliation fails', function (): void {
+it('catches a CRM that loses events: a webhook answering 403 drops them and reconciliation fails', function () {
     connectHarness();
-    runDataplane($this); // confirm first
+    runDelivery($this); // confirm first
     sendLoad(5);
     // Break the CRM's validator after confirmation: every notification now fails signature checks.
     config(['services.sns.cert_host_pattern' => '/^nope$/']);
     app()->instance(MessageValidator::class, new MessageValidator(fn () => '', '/^nope$/'));
 
-    runDataplane($this);
+    runDelivery($this);
 
     expect(DB::table('sesame_events')->where('status', 'dropped')->where('last_status', 403)->count())->toBe(10) // Send + Delivery each
         ->and(DB::table('sesame_delivery_attempts')->where('http_status', 403)->count())->toBe(10) // 4xx is never retried
         ->and(Artisan::call('crm:reconcile'))->toBe(1);
 });
 
-it('retries 5xx with the SNS policy and then drops', function (): void {
+it('retries 5xx with the SNS policy and then drops', function () {
     connectHarness();
-    runDataplane($this);
+    runDelivery($this);
     sendLoad(1);
     // The webhook's storage is "down".
     Schema::rename('harness_sns_receipts', 'harness_sns_receipts_down');
 
-    runDataplane($this, 10);
+    runDelivery($this, 10);
 
     Schema::rename('harness_sns_receipts_down', 'harness_sns_receipts');
     $send = DB::table('sesame_events')->where('type', 'Send')->first();
@@ -151,38 +141,87 @@ it('retries 5xx with the SNS policy and then drops', function (): void {
         ->and(DB::table('sesame_delivery_attempts')->where('event_id', $send->id)->pluck('http_status')->unique()->all())->toBe([503]);
 });
 
-it('resumes after a restart: WAL records ingest once and pending events are rescheduled', function (): void {
+it('redelivers events whose delivery job was lost once the lease runs out, and a late job settles nothing', function () {
+    config(['sesame.delivery.lease_seconds' => 0.3]);
     connectHarness();
-    runDataplane($this); // subscription confirmed
+    runDelivery($this); // subscription confirmed
     sendLoad(20);
+    IngestBuffer::drain();
 
-    // A data plane that ingests the WAL and then "crashes" before delivering anything.
-    $crashing = new Dataplane(new DeliveryPool(0, 5, inProcessHandler($this)));
-    $crashing->boot();
-    $crashing->tick();
-    expect(DB::table('sesame_messages')->count())->toBe(20)
-        ->and(DB::table('sesame_events')->where('status', 'pending')->count())->toBe(40);
+    // A sweep hands every event to jobs that never run: the worker died.
+    $queue = app('queue');
+    Queue::fake([DeliverEvents::class]);
+    expect(app(Sweeper::class)->sweep())->toBe(40);
+    $lost = Queue::pushed(DeliverEvents::class)->all();
+    // While leased, no other sweep takes them.
+    expect(app(Sweeper::class)->sweep())->toBe(0);
+    Queue::swap($queue); // back to the sync connection
 
-    // A fresh process: rebuilds the wheel from Postgres, re-reads the WAL from the checkpoint.
-    runDataplane($this);
+    usleep(400_000); // the lease runs out
+    runDelivery($this);
 
-    expect(DB::table('sesame_messages')->count())->toBe(20)
-        ->and(DB::table('sesame_events')->where('type', '<>', 'SubscriptionConfirmation')->count())->toBe(40)
-        ->and(DB::table('sesame_events')->where('status', 'delivered')->where('type', '<>', 'SubscriptionConfirmation')->count())->toBe(40)
+    expect(DB::table('sesame_events')->where('type', '<>', 'SubscriptionConfirmation')->where('status', 'delivered')->count())->toBe(40)
+        ->and(DB::table('sesame_delivery_attempts')->count())->toBe(41);
+
+    // The lost jobs turn up late (queue redelivery): their lease tokens are stale, so nothing is posted or settled twice.
+    foreach ($lost as $job) {
+        app()->call([$job, 'handle']);
+    }
+    expect(DB::table('sesame_delivery_attempts')->count())->toBe(41)
+        ->and(DB::table('harness_message_events')->count())->toBe(40)
         ->and(Artisan::call('crm:reconcile'))->toBe(0);
 });
 
-it('never resends accepted work and skips suppressed contacts', function (): void {
+it('reports sends lost with a replaced ingest buffer as simulator losses, apart from CRM mismatches', function () {
     connectHarness();
-    runDataplane($this);
+    runDelivery($this); // subscription confirmed
+    holdDrains($this);
+    sendLoad(20, 'before-deploy'); // acknowledged, still only in the instance's buffer
+
+    // A deploy replaces the instance: its temporary directory, and the buffer with it, is gone.
+    $old = IngestBuffer::id();
+    File::deleteDirectory(dirname(IngestBuffer::path()));
+    IngestBuffer::reset();
+    DB::table('sesame_buffers')->where('id', $old)->update(['last_seen_at' => now()->subMinute()]);
+
+    sendLoad(5, 'after-deploy'); // served by the new instance's fresh buffer
+    expect(IngestBuffer::id())->not->toBe($old);
+    runDelivery($this);
+
+    expect(DB::table('harness_outbound_messages')->where('state', 'accepted')->count())->toBe(25)
+        ->and(DB::table('sesame_messages')->count())->toBe(5);
+    $exit = Artisan::call('crm:reconcile', ['--json' => $report = tempnam(sys_get_temp_dir(), 'rec')]);
+    $result = json_decode(file_get_contents($report), true);
+
+    expect($exit)->toBe(2) // the simulator lost sends; the CRM did nothing wrong
+        ->and($result['reconciliation']['mismatches'])->toBe(0)
+        ->and($result['reconciliation']['messages_compared'])->toBe(5)
+        ->and($result['simulator_losses']['lost_in_ingest_buffer'])->toBe(20)
+        ->and($result['simulator_losses']['examples'][0]['buffer'])->toBe($old)
+        ->and($result['simulator_losses']['examples'][0]['drained_through'])->toBe(0);
+});
+
+it('still fails reconciliation for a MessageId Sesame never issued', function () {
+    connectHarness();
+    runDelivery($this);
+    sendLoad(2);
+    runDelivery($this);
+    DB::table('harness_outbound_messages')->orderBy('id')->limit(1)->update(['provider_message_id' => '0100000000000000-00000000-0000-0000-0000-000000000000-000001']);
+
+    expect(Artisan::call('crm:reconcile'))->toBe(1);
+});
+
+it('never resends accepted work and skips suppressed contacts', function () {
+    connectHarness();
+    runDelivery($this);
     sendLoad(200); // contact 200 is a forced hard bounce
-    runDataplane($this);
+    runDelivery($this);
     $first = DB::table('harness_outbound_messages')->orderBy('id')->first();
 
-    dispatch(new SendLoadMessage($first->id)); // queue redelivery
+    SendLoadMessage::dispatch($first->id); // queue redelivery
     $bounced = DB::table('harness_contacts')->where('email', 'bounce+200@load.crm.test')->value('id');
     $again = DB::table('harness_outbound_messages')->insertGetId(['contact_id' => $bounced, 'load_run' => 'second', 'dispatched_at' => now()]);
-    dispatch(new SendLoadMessage($again));
+    SendLoadMessage::dispatch($again);
 
     expect(DB::table('sesame_messages')->count())->toBe(200)
         ->and(DB::table('harness_outbound_messages')->where('id', $again)->value('state'))->toBe('skipped_suppressed');

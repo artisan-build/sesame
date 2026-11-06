@@ -2,13 +2,18 @@
 
 use App\CrmHarness\CrmHarnessServiceProvider;
 use App\Models\SesameAccount;
-use App\Sesame\Ingest\RateGate;
+use App\Sesame\Delivery\DeliveryPool;
+use App\Sesame\Delivery\Sweeper;
+use App\Sesame\Ingest\AccountDirectory;
+use App\Sesame\Ingest\IngestBuffer;
 use Aws\SesV2\SesV2Client;
 use Aws\Sns\MessageValidator;
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Promise\Create;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Defer\DeferredCallbackCollection;
+use Illuminate\Support\Facades\DB;
 use Psr\Http\Message\RequestInterface;
 use Tests\TestCase;
 
@@ -62,18 +67,17 @@ function something(): void
 |--------------------------------------------------------------------------
 */
 
-/** Fresh WAL/snapshot paths, a fixed public host, and a validator bound to it. */
+/** A fresh ingest buffer, a fixed public host, and a validator bound to it. */
 function sesameSetUp(): string
 {
     $dir = sys_get_temp_dir().'/sesame-test-'.bin2hex(random_bytes(6));
     config([
         'sesame.public_url' => 'https://sesame.test',
-        'sesame.wal.path' => $dir.'/wal',
-        'sesame.wal.snapshot' => $dir.'/accounts.json',
-        'sesame.wal.fsync' => false,
+        'sesame.buffer.path' => $dir.'/buffer.sqlite',
         'services.sns.cert_host_pattern' => '/^sesame\.test$/',
     ]);
-    RateGate::reset();
+    IngestBuffer::reset();
+    AccountDirectory::forget();
     CrmHarnessServiceProvider::flushCertificates();
     // The real AWS validator; only certificate fetching is routed in-process.
     app()->instance(MessageValidator::class, new MessageValidator(
@@ -118,15 +122,43 @@ function sesClient(TestCase $test, string $accessKeyId): SesV2Client
     ]);
 }
 
-/** @return array<string, mixed> */
-function walRecords(): array
+/**
+ * What is still in this instance's ingest buffer, waiting to be drained.
+ *
+ * @return array{sends: list<array<string, mixed>>, refusals: list<array<string, mixed>>}
+ */
+function bufferRows(): array
 {
-    $records = [];
-    foreach (glob(config('sesame.wal.path').'/*.wal') ?: [] as $file) {
-        foreach (file($file) ?: [] as $line) {
-            $records[] = json_decode($line, true);
-        }
-    }
+    $pdo = new PDO('sqlite:'.config('sesame.buffer.path'));
 
-    return $records;
+    return [
+        'sends' => array_map(fn (array $r): array => ['seq' => (int) $r['seq']] + json_decode($r['body'], true), $pdo->query('SELECT seq, body FROM sends ORDER BY seq')->fetchAll(PDO::FETCH_ASSOC)),
+        'refusals' => $pdo->query('SELECT kind, account_id FROM refusals ORDER BY at_ms')->fetchAll(PDO::FETCH_ASSOC),
+    ];
+}
+
+/** Keep after-response callbacks from running, as if the process died right after answering. */
+function holdDrains(TestCase $test): void
+{
+    (fn () => $this->swap(DeferredCallbackCollection::class, new class extends DeferredCallbackCollection
+    {
+        public function invoke(): void {}
+
+        public function invokeWhen(?Closure $when = null): void {}
+    }))->call($test);
+}
+
+/** Drain, sweep and deliver until nothing is pending or the deadline passes. */
+function runDelivery(TestCase $test, float $seconds = 15): void
+{
+    app()->bind(DeliveryPool::class, fn () => new DeliveryPool(16, 5, inProcessHandler($test)));
+    $deadline = microtime(true) + $seconds;
+    while (microtime(true) < $deadline) {
+        IngestBuffer::drain();
+        app(Sweeper::class)->sweep();
+        if (IngestBuffer::depth() === 0 && DB::table('sesame_events')->where('status', 'pending')->doesntExist()) {
+            return;
+        }
+        usleep(10000);
+    }
 }

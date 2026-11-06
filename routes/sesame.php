@@ -17,3 +17,4 @@ Route::get('/sns/{account}/', [SnsController::class, 'action'])->whereUuid('acco
 
 Route::get('/sesame/v1/runs/{run}/truth', [RunController::class, 'truth'])->whereUuid('run');
 Route::get('/sesame/v1/runs/{run}/summary', [RunController::class, 'summary'])->whereUuid('run');
+Route::post('/sesame/v1/runs/{run}/missing', [RunController::class, 'missing'])->whereUuid('run');
