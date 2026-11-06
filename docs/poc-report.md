@@ -83,9 +83,38 @@ buffer holds everything until the next scheduled drain succeeds: at least about 
 unbounded while Postgres is down. On Cloud, the Postgres round trip and the deploy's graceful
 shutdown are both unmeasured.
 
+**Live run with a deploy in the middle (orb, real processes).** Sesame ran on Octane with
+`schedule:work` (drain and sweep every second), 2 queue workers for `DeliverEvents`, and the
+harness on its own Octane server with 6 workers. The harness sent 7,368 sends at 30/s under label
+`deploy-mid-run`: 5,400 planned, plus about 1,968 when the driver service restarted by mistake. At
+13:26:39 the Sesame web service was stopped with SIGTERM, its tmp buffer deleted, and the service
+restarted 2.7 s later. Results:
+
+- The CRM recorded 7,293 sends as accepted. **All 7,293 are in Postgres: 0 lost.** A graceful stop
+  lets Octane finish the deferred drains. The SIGKILL runs above are the case that loses sends.
+- 74 sends failed on the client with connection refused during the restart. They were never
+  acknowledged, so they are not losses.
+- **32 of 14,642 events were dropped with HTTP 403**, all due between 13:26:39.6 and 13:26:42.2.
+  Delivery workers kept posting while the web server was down. Harness workers recycled by Octane's
+  request limit had lost their certificate cache, could not fetch `cert.pem` from Sesame, failed
+  validation and answered 403, which SNS rules never retry. A deploy therefore loses events as well
+  as buffered sends, and `crm:reconcile` reports these as CRM mismatches. On Cloud, an overlapping
+  deploy keeps the old instance serving, which may hide this. That is untested.
+- At the snapshot, 14,603 events were delivered, 32 dropped and 7 still pending (DeliveryDelay
+  finals due by 13:43). There were no failed jobs after the `DeliveryPool` fix. The final
+  `crm:reconcile` was still waiting when the orb stopped advancing, so it has no recorded exit
+  code. Expect exit 1 with 32 mismatches, all from the deploy.
+
+The same live stack found one real bug that the in-process tests hid. Nothing bound `DeliveryPool`
+in the container, so every queued delivery job failed until the binding was added. A regression
+test now builds the pool through the container. The three jobs that failed before the fix had their
+events redelivered when the leases ran out, which exercised lease recovery on real processes.
+
 **Is this acceptable for a simulator?** Yes, with the reporting above. A lost send can never pass
 as a CRM bug, because it is reported as a simulator loss and the run is marked incomplete
-(`crm:reconcile` exits 2). It costs a rerun, not a wrong verdict. It would not be acceptable if
+(`crm:reconcile` exits 2). It costs a rerun, not a wrong verdict. That holds for buffer losses only. Events dropped
+because the certificate URL was down during a deploy are still counted as CRM mismatches, which is
+one more reason never to deploy during a run. It would not be acceptable if
 Sesame ever had to stand in for SES's own durability.
 
 ### Lab findings applied

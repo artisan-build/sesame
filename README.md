@@ -26,6 +26,13 @@ sends per kill at 300/s and none at 30/s. If the after-response drain cannot run
 Postgres is unreachable), the window grows to whatever the buffer holds until the next scheduled
 drain succeeds.
 
+**A deploy also briefly takes down the certificate URL.** Notifications are signed with a
+certificate served from Sesame itself (`/sns/{account}/cert.pem`). A webhook that has to fetch it
+while Sesame is restarting fails validation, and if it answers 4xx, SNS rules drop the event. In
+the live test below, 32 of 14,642 events were dropped this way during a 2.7 s restart. These
+drops show up in `crm:reconcile` as CRM mismatches ("dropped after HTTP 403"), so a deploy
+during a run produces misleading findings as well as lost sends.
+
 So:
 
 - **Do not deploy Sesame while a test is running.** Turn off push-to-deploy on its Cloud
