@@ -7,8 +7,8 @@ use Illuminate\Support\Str;
 
 /**
  * Turns drawn outcomes into the SES events a message will publish, each with
- * its own SNS MessageId and due time. Planned at ingest, written to the WAL,
- * so a restart reschedules exactly the same events.
+ * its own SNS MessageId and due time. Planned at ingest and stored with the
+ * send, so a repeated drain writes exactly the same events.
  */
 final class EventPlan
 {

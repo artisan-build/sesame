@@ -26,7 +26,7 @@ class SesameRunStart extends Command
             $this->option('preset') ?: null,
             $this->option('label') ?: null,
         );
-        AccountDirectory::write();
+        AccountDirectory::forget();
         $this->line((string) json_encode(['run_id' => $run->id, 'seed' => $run->seed, 'preset' => $run->preset], JSON_UNESCAPED_SLASHES));
 
         return self::SUCCESS;

@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Sesame\Delivery\DeliveryPool;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
@@ -16,7 +17,8 @@ class AppServiceProvider extends ServiceProvider
     #[\Override]
     public function register(): void
     {
-        //
+        // A fresh pool per delivery job, sized from config/sesame.php.
+        $this->app->bind(DeliveryPool::class, fn (): DeliveryPool => DeliveryPool::fromConfig());
     }
 
     /**

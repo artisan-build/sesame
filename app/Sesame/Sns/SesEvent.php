@@ -9,7 +9,7 @@ namespace App\Sesame\Sns;
 final class SesEvent
 {
     /**
-     * @param  array<string, mixed>  $message  a WAL "m" record
+     * @param  array<string, mixed>  $message  an ingest-buffer send record
      * @param  array<string, mixed>  $event  one planned event from it
      * @return array<string, mixed>
      */

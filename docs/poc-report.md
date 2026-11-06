@@ -17,9 +17,141 @@ Cloud, AWS, or real email.
 | Does the loop close at 30/s with every event reconciled? | Yes, on the local harness. 27,000 sends over a 15-minute plateau, 54,252 SNS notifications, 0 reconciliation mismatches. | Demonstrated locally, not against Growth staging |
 | Does the Octane ingest hold single-digit p99 at 300/s for 10 minutes? | Not on this host, but a no-PHP control failed the same way. In quiet seconds Octane's p99 was 9.83 ms. | **Not decidable here.** Laravel is provisional; rerun on the target host |
 | Are notifications signed in a format the real validator accepts? | Yes. All three SNS types are verified with `aws/aws-php-sns-message-validator` in tests, and live over HTTPS during the plateau. | Test-verified and live in the orb |
-| Does a restart resume a run? | Yes. WAL records are ingested exactly once, and pending events are rebuilt from Postgres. | Test-verified; not exercised under live load |
+| Does a restart resume a run? | Delivery resumes: a lost or crashed delivery job's events go out again when their lease runs out, exactly once (live, after a real worker failure). Sends acknowledged but not yet drained from a replaced instance's buffer are **lost by design** and reported apart from CRM findings. | Test-verified and live in the orb; not on Laravel Cloud |
+| Does it fit Laravel Cloud's managed resources? | Yes, by design: web app, Postgres, scheduler, managed queue. No persistent disk or long-running process. | **Untested on Cloud**: no live provisioning run was authorized |
+
+## Cloud-native redesign (6 November, later)
+
+The first PoC kept a write-ahead log on local disk and ran a long-lived `sesame:dataplane`
+process. Laravel Cloud offers neither, and a Scalpels install has to run on what it provisions.
+Sesame now uses only Cloud resources that Scalpels already provisions: the web app (PHP-FPM or
+Octane), Postgres, the scheduler and a managed queue.
+
+```
+SendEmail ──► SQLite buffer in the instance's tmp dir ──► 200 + MessageId
+                     │ after the response (defer) and every second (scheduler, every replica)
+                     ▼
+               Postgres: sesame_messages, sesame_events, sesame_buffers
+                     │ scheduler, every second, onOneServer: lease due events (FOR UPDATE SKIP LOCKED)
+                     ▼
+               managed queue: DeliverEvents (25 events, concurrent POSTs, tries=1)
+                     │ settles only rows still holding its lease token
+                     ▼
+               signed SNS POST ──► CRM webhook
+```
+
+### Durability: accepted, with an explicit loss window
+
+Ed accepted this on 6 November: **an acknowledged send lives only in the instance's SQLite buffer
+until it is drained to Postgres.** A deploy or reboot replaces the filesystem, and an unexpected
+instance or process loss can take the buffer with it. Undrained sends are then lost. This is not
+durable-before-ack, and nothing here claims it is. His required safeguards:
+
+1. **Push-to-deploy off for Sesame installs.** Not yet implemented in Scalpels; see "What is not
+   done". Until it is, turn it off by hand on the Sesame environment.
+2. **Plain documentation** that deploying during a test can lose that test's data. It is at the
+   top of the README.
+
+What keeps the window small, and how a loss is found:
+
+- The controller registers `defer(fn () => IngestBuffer::drain())`, so the drain runs on the same
+  instance right after the response is flushed. The scheduler also drains every buffer every
+  second and records a heartbeat.
+- The drain is idempotent. It copies with `ON CONFLICT DO NOTHING` on stable IDs and deletes from
+  SQLite only after the Postgres commit. A file lock serialises drains per buffer.
+- Each MessageId carries its buffer's UUID and sequence number. `sesame_buffers` records how far
+  each buffer was drained and when it was last seen, so `IngestBuffer::lossFor()`, the
+  `/missing` endpoint and `crm:reconcile` can tell `lost` (a simulator loss) from `unknown` (a CRM
+  finding).
+
+Measured in the orb ([`evidence/ingest-buffer-loss.json`](evidence/ingest-buffer-loss.json)).
+Octane has 4 workers. vegeta runs on the same 2 vCPUs.
+
+| Run | Ingest p50 / p95 / p99 / max | Buffer depth, sampled every 10 ms | Acknowledged but not in Postgres |
+| --- | --- | --- | --- |
+| Octane, 30/s, 60 s | 3.50 / 4.58 / 5.72 / 10.36 ms | max 1, 90% of samples empty | 0 of 1,800 |
+| Octane, 300/s, 120 s | 3.15 / 9.28 / 149 / 293 ms | max 30, p99 5 | 0 of 36,000 |
+| Per-request PHP (FrankenPHP classic, like FPM), 30/s, 50 s | 10.55 / 13.88 / 22.79 / 56.31 ms | | 0 of 1,500 |
+| **SIGKILL every server process and delete the buffer mid-run**, 30/s, 3 runs | | | **0, 0, 0** (of 212, 215, 225) |
+| **Same, at 300/s**, 9 runs | | | **1, 0, 0, 2, 3, 1, 1, 0, 0** (of about 2,100–2,260 each) |
+
+Every lost send whose ID was captured was classified `lost`, with `seq = drained_through + 1` of
+the replaced buffer: the sends in flight in the last few milliseconds. These numbers come from a
+fast local Postgres. They do not cover the case where the after-response drain cannot run, for
+example Postgres being unreachable or the process dying inside the deferred callback. Then the
+buffer holds everything until the next scheduled drain succeeds: at least about 1 s of sends, and
+unbounded while Postgres is down. On Cloud, the Postgres round trip and the deploy's graceful
+shutdown are both unmeasured.
+
+**Live run with a deploy in the middle (orb, real processes).** Sesame ran on Octane with
+`schedule:work` (drain and sweep every second), 2 queue workers for `DeliverEvents`, and the
+harness on its own Octane server with 6 workers. The harness sent 7,368 sends at 30/s under label
+`deploy-mid-run`: 5,400 planned, plus about 1,968 when the driver service restarted by mistake. At
+13:26:39 the Sesame web service was stopped with SIGTERM, its tmp buffer deleted, and the service
+restarted 2.7 s later. Results:
+
+- The CRM recorded 7,293 sends as accepted. **All 7,293 are in Postgres: 0 lost.** A graceful stop
+  lets Octane finish the deferred drains. The SIGKILL runs above are the case that loses sends.
+- 74 sends failed on the client with connection refused during the restart. They were never
+  acknowledged, so they are not losses.
+- **32 of 14,642 events were dropped with HTTP 403**, all due between 13:26:39.6 and 13:26:42.2.
+  Delivery workers kept posting while the web server was down. Harness workers recycled by Octane's
+  request limit had lost their certificate cache, could not fetch `cert.pem` from Sesame, failed
+  validation and answered 403, which SNS rules never retry. A deploy therefore loses events as well
+  as buffered sends, and `crm:reconcile` reports these as CRM mismatches. On Cloud, an overlapping
+  deploy keeps the old instance serving, which may hide this. That is untested.
+- At the snapshot, 14,603 events were delivered, 32 dropped and 7 still pending (DeliveryDelay
+  finals due by 13:43). There were no failed jobs after the `DeliveryPool` fix. The final
+  `crm:reconcile` was still waiting when the orb stopped advancing, so it has no recorded exit
+  code. Expect exit 1 with 32 mismatches, all from the deploy.
+
+The same live stack found one real bug that the in-process tests hid. Nothing bound `DeliveryPool`
+in the container, so every queued delivery job failed until the binding was added. A regression
+test now builds the pool through the container. The three jobs that failed before the fix had their
+events redelivered when the leases ran out, which exercised lease recovery on real processes.
+
+**Is this acceptable for a simulator?** Yes, with the reporting above. A lost send can never pass
+as a CRM bug, because it is reported as a simulator loss and the run is marked incomplete
+(`crm:reconcile` exits 2). It costs a rerun, not a wrong verdict. That holds for buffer losses only. Events dropped
+because the certificate URL was down during a deploy are still counted as CRM mismatches, which is
+one more reason never to deploy during a run. It would not be acceptable if
+Sesame ever had to stand in for SES's own durability.
+
+### Lab findings applied
+
+From scalpels.app `resources/lab`, which already records the Cloud constraints:
+
+- **No persistent volume; a deploy wipes the filesystem.** So the buffer is tmp-only by intent and
+  is drained continuously.
+- **Hibernation is a freeze-and-thaw of the same container** (same pid, files kept), so a
+  hibernating Sesame keeps its buffer. Scale-to-zero holds the environment at one replica.
+- **Old and new instances overlap during a deploy, and deploy commands may run in another
+  container.** Each buffer drains only itself, and the sweeper claims with SKIP LOCKED leases, so
+  overlapping instances neither collide nor double-deliver.
+- **Queue jobs run off-instance and cannot see the instance's local SQLite.** So the drain runs in
+  `defer()` and the scheduler on the web instance, never in a queue job. Delivery reads only
+  Postgres.
+- **Octane 2.22+ crashes on Cloud's FrankenPHP 1.12.4.** Sesame works without Octane (the
+  per-request row above). If Octane is turned on, pin `laravel/octane ~2.21.0` first. Sesame's
+  `composer.json` currently requires `^2.23`, which would hit the crash.
+
+### Hosting assumptions not yet tested on Cloud
+
+None of these has run on Laravel Cloud. A live provisioning test needs separate authorization.
+
+- `defer()` callbacks run after the response under Cloud's PHP-FPM and Octane. They run under
+  FrankenPHP in the orb.
+- The scheduler's sub-minute `everySecond()` tasks run reliably on the app instance, and
+  `onOneServer()` uses the cache store Cloud configures.
+- `QUEUE_CONNECTION=cloud` delivers `DeliverEvents` within the lease (60 s). The job finishes well
+  under Flex's 90 s limit: 25 POSTs with a 15 s timeout.
+- With more than one replica, each replica drains its own buffer through the scheduler. This
+  assumes the scheduler runs on every replica without `onOneServer`, as Cloud's docs say.
 
 ## What was built
+
+This section describes the first PoC. The fast acknowledgement, data plane and WAL bullets are
+superseded by the redesign above; everything else still holds.
 
 **Sesame** (`app/Sesame`), one Laravel 13 app on Postgres:
 
@@ -177,15 +309,15 @@ copy-paste job.
 
 ## Tests
 
-`php artisan test`: 83 passed, of which 31 are Sesame and harness tests; the rest are the
-starter's auth tests, on Postgres. PHPStan level 6: 0 errors. Pint: clean.
+After the redesign, `php artisan test` runs 88 tests, all passing, on Postgres. PHPStan level 6
+reports 0 errors and Pint is clean.
 
 | Test file | Proves |
 | --- | --- |
 | `tests/Unit/Sesame/OutcomeLotteryTest.php` | Same seed replays, different seed differs; rates near configured over 20,000 draws; forced local parts (and `bouncer@` is not forced); timing windows respected |
 | `tests/Feature/Sesame/SnsSigningTest.php` | Notification (with and without Subject), SubscriptionConfirmation and UnsubscribeConfirmation all verify with the real `MessageValidator`; a tampered field, another account's key, or a validator still bound to `amazonaws.com` all fail; the cert is served at `.pem` |
-| `tests/Feature/Sesame/SendEmailTest.php` | Real AWS SDK `SesV2Client` against the endpoint: SES-shaped MessageId, tags and headers captured, folded headers unfolded, body ignored; no DB write on ingest; SDK-mapped error codes; throttling; Reject |
-| `tests/Feature/Sesame/LoopTest.php` | The whole loop in process: harness job, Mailable, ses-v2 transport, ingest, WAL, data plane, signed POST, webhook, queued processing, reconcile. Confirmation gates delivery; 1,000 messages with 30% duplicates and 30% out-of-order reconcile with 0 mismatches; a webhook answering 403 loses events and reconcile fails; 5xx retries 3 times then drops; a restart re-reads the WAL exactly once and delivers rescheduled events; accepted work is not resent; suppressed contacts are skipped |
+| `tests/Feature/Sesame/SendEmailTest.php` | The real AWS SDK `SesV2Client` against the endpoint. The MessageId has SES's shape. Tags and headers are captured, folded headers are unfolded, and the body is ignored. The send sits in the buffer until the after-response drain moves it. With the account cached, ingest makes no Postgres queries. Replaying a drain is idempotent. Errors map to SDK error codes. Throttling and Reject are recorded as buffer refusals. |
+| `tests/Feature/Sesame/LoopTest.php` | The whole loop in process: harness job, Mailable, `ses-v2` transport, buffer, drain, sweep, queued `DeliverEvents`, signed POST, webhook, queued processing, reconcile. Confirmation gates delivery. 1,000 messages with 30% duplicates and 30% out-of-order delivery reconcile with 0 mismatches. A webhook answering 403 loses events and reconcile fails. 5xx is retried 3 times, then dropped. Lost delivery jobs are redelivered once their lease expires, and a late job settles nothing. Sends in a replaced buffer are reported as simulator losses: reconcile exits 2 with 0 CRM mismatches. A MessageId Sesame never issued still fails reconcile. The container builds the `DeliveryPool` that queue workers use. Accepted work is not resent, and suppressed contacts are skipped. |
 | `tests/Feature/CrmHarness/SafetyTest.php` | Production boot refuses either simulator setting; staging boots; the load seeder refuses production; sends outside the load domain are refused; 403 for a missing type header or bad signature, 200 and a single record for a duplicate |
 
 Writing the tests surfaced three real bugs, now fixed:
@@ -212,21 +344,29 @@ Against the brief, in order of how much it matters next:
      not.
    - The topic ARN pin must accept Sesame's ARN.
    - Setting `services.ses.endpoint` is enough for the existing `growth-ses` mailer.
-2. **Runtime decision**: rerun the benchmark on the target host (above).
-3. **Hosting**: the WAL is a local file shared by the Octane ingest and the data plane, so they must
-   run on one host with a persistent disk. Laravel Cloud's ephemeral filesystem would lose
-   un-ingested records on redeploy. A Forge server, or moving the WAL, is needed. That ties into the
-   brief's open question on hosting.
-4. **Phase 2 (measurement)**: ramp steps and ceiling, gates and baselines, daily rollups, the PR
+2. **Runtime decision**: rerun the benchmark on the target host (above). The redesign removes the
+   long-running data plane, so the question is now only whether Cloud's PHP ingest holds
+   single-digit p99.
+3. **Scalpels packaging (decision needed).** The redesign needs the Sesame manifest to add a
+   managed queue (`mq.flex.512mb`), a generated `APP_KEY` and `migrate --force` after deploy, and
+   it needs Scalpels to turn off push-to-deploy on the environment. The Cloud API supports that
+   (`PATCH /environments/{id}` with `uses_push_to_deploy`), but no Scalpels manifest field can ask
+   for it: schemas are digest-locked, and v6 `targets.cloud.lifecycle` rejects unknown keys. The
+   options are a manifest v7 field (a contract-wide schema bump that upcasts stored manifests), or
+   turning push-to-deploy off for every install (a change for every app). Both are cross-cutting,
+   so they are escalated rather than built.
+4. **A live Cloud provisioning test**, which needs separate authorization (see the hosting
+   assumptions above).
+5. **Phase 2 (measurement)**: ramp steps and ceiling, gates and baselines, daily rollups, the PR
    report, the CI wake/run/sleep flow. Per-event webhook timing and the reconciliation API exist.
-5. **Phase 3 (realism) gaps**: suppression memory (`OnAccountSuppressionList` and the "sends to
+6. **Phase 3 (realism) gaps**: suppression memory (`OnAccountSuppressionList` and the "sends to
    suppressed addresses" metric), reputation-driven `SendingPausedException`, injected `SendEmail`
    latency, custom retry policies and `throttlePolicy.maxReceivesPerSecond`,
    `UnsubscribeConfirmation`.
-6. **Phase 4 / control plane**: `built-for-cloud` users, dashboard and MCP are not installed. The
+7. **Phase 4 / control plane**: `built-for-cloud` users, dashboard and MCP are not installed. The
    accounts are Artisan-only. Multiple simulated accounts per instance work.
-7. **Signing throughput**: signing happens in the single data-plane loop, not a worker pool. That
-   was fine at 30/s (about 75 notifications/s) but was not measured beyond that.
+8. **Delivery throughput**: signing and POSTs now run in queued jobs of 25 events, so they scale
+   with queue workers. This was measured only at 30/s.
 
 ## Scalpels catalog status
 
@@ -235,9 +375,9 @@ Sesame is listed in the Scalpels catalog as an **Experimental** Marketplace app
 artisan-build/scalpels.app #509 and created on production with
 `scalpels:upsert-catalog-app sesame` on 2026-11-06. Experimental means public, a work in
 progress, and installable like any Experimental marketplace listing. The manifest declares
-PHP 8.5, Postgres and the scheduler but no commands or keys. It cannot describe the
-`sesame:dataplane` process or the persistent disk the write-ahead log needs, so **an install
-from Scalpels does not work end to end**; the listing and its docs say so. The items under
+PHP 8.5, Postgres and the scheduler but no queue, commands or keys, so **an install from
+Scalpels does not work end to end yet**; the listing and its docs say so. The redesigned code
+needs no disk or extra process, only the manifest and push-to-deploy changes in item 3. The items under
 "What is not done" still apply.
 
 ## Operating notes
@@ -245,4 +385,6 @@ from Scalpels does not work end to end**; the listing and its docs say so. The i
 - Sesame needs HTTPS for its certificate URL. Locally, `octane:frankenphp --https` with
   `SESAME_CA_BUNDLE` pointing consumers at Caddy's root CA.
 - A second Octane server from the same checkout needs its own `OCTANE_STATE_FILE`.
-- Keep `storage/sesame/` out of anything that scans the tree.
+- The ingest buffer is `sys_get_temp_dir()/sesame/buffer.sqlite` (`SESAME_BUFFER_PATH`). Never
+  point it at a shared or persistent path: one file per instance is what the loss accounting
+  assumes.

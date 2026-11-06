@@ -2,13 +2,15 @@
 
 use App\Sesame\Accounts;
 use App\Sesame\Ingest\AccountDirectory;
+use App\Sesame\Ingest\IngestBuffer;
 use Aws\SesV2\Exception\SesV2Exception;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Sleep;
 
 beforeEach(function (): void {
     sesameSetUp();
     $created = Accounts::create('ingest', null, 'healthy', 1000, 99);
-    AccountDirectory::write();
+    AccountDirectory::forget();
     $this->akid = $created['access_key_id'];
     $this->account = $created['account'];
 });
@@ -19,6 +21,7 @@ function rawMime(string $to, string $extraHeaders = ''): string
 }
 
 it('accepts a Laravel-shaped SendEmail through the real SDK and returns an SES-shaped MessageId', function (): void {
+    holdDrains($this);
     $result = sesClient($this, $this->akid)->sendEmail([
         'Source' => 'growth@load.crm.test', // Laravel's v1-style key, tolerated
         'ConfigurationSetName' => 'crm-load',
@@ -27,13 +30,14 @@ it('accepts a Laravel-shaped SendEmail through the real SDK and returns an SES-s
         'Content' => ['Raw' => ['Data' => rawMime('success+1@load.crm.test')]],
     ]);
 
-    expect($result['MessageId'])->toMatch('/\A0100[0-9a-f]{12}-[0-9a-f-]{36}-000000\z/');
+    // SES's shape, carrying the buffer that accepted it and its sequence number there.
+    expect($result['MessageId'])->toMatch('/\A0100[0-9a-f]{12}-[0-9a-f-]{36}-[0-9a-f]{6}\z/')
+        ->and(IngestBuffer::parseMessageId($result['MessageId']))->toBe(['buffer' => IngestBuffer::id(), 'seq' => 1]);
 
-    $records = walRecords();
-    expect($records)->toHaveCount(1);
-    $record = $records[0];
-    expect($record['id'])->toBe($result['MessageId'])
-        ->and($record['cs'])->toBe('crm-load')
+    $sends = bufferRows()['sends'];
+    expect($sends)->toHaveCount(1);
+    $record = $sends[0];
+    expect($record['cs'])->toBe('crm-load')
         ->and($record['tags'])->toBe(['outbound_message_id' => ['17']])
         ->and($record['ch']['subject'])->toBe('Hi there') // folded header unfolded
         ->and($record['ch']['messageId'])->toBe('<m1@load.crm.test>')
@@ -41,14 +45,53 @@ it('accepts a Laravel-shaped SendEmail through the real SDK and returns an SES-s
         ->and(array_column($record['ev'], 'type'))->toBe(['Send', 'Delivery']);
 });
 
-it('makes no database write on the ingest path', function (): void {
-    DB::enableQueryLog();
-    sesClient($this, $this->akid)->sendEmail([
+it('drains an accepted send to Postgres after the response, under the MessageId the client got', function (): void {
+    $result = sesClient($this, $this->akid)->sendEmail([
         'Destination' => ['ToAddresses' => ['success@load.crm.test']],
         'Content' => ['Raw' => ['Data' => rawMime('success@load.crm.test')]],
     ]);
 
-    expect(collect(DB::getQueryLog())->pluck('query')->reject(fn ($q): bool => str_starts_with(strtolower(ltrim($q)), 'select'))->all())->toBe([]);
+    expect(bufferRows()['sends'])->toBe([])
+        ->and(DB::table('sesame_messages')->where('message_id', $result['MessageId'])->exists())->toBeTrue()
+        ->and(DB::table('sesame_events')->where('message_id', $result['MessageId'])->pluck('type')->sort()->values()->all())->toBe(['Delivery', 'Send'])
+        ->and((int) DB::table('sesame_buffers')->where('id', IngestBuffer::id())->value('drained_through_seq'))->toBe(1);
+});
+
+it('makes no Postgres round trip on the ingest path once the account is cached', function (): void {
+    holdDrains($this);
+    $client = sesClient($this, $this->akid);
+    $send = fn (int $i) => $client->sendEmail([
+        'Destination' => ['ToAddresses' => ["success+{$i}@load.crm.test"]],
+        'Content' => ['Raw' => ['Data' => rawMime("success+{$i}@load.crm.test")]],
+    ]);
+    $send(1); // reads the account once
+
+    DB::enableQueryLog();
+    $send(2);
+    $send(3);
+
+    expect(DB::getQueryLog())->toBe([]);
+});
+
+it('drains idempotently when a drain dies between the Postgres commit and the buffer delete', function (): void {
+    holdDrains($this);
+    $client = sesClient($this, $this->akid);
+    foreach ([1, 2, 3] as $i) {
+        $client->sendEmail(['Destination' => ['ToAddresses' => ["load-{$i}@load.crm.test"]], 'Content' => ['Raw' => ['Data' => rawMime("load-{$i}@load.crm.test")]]]);
+    }
+    $pdo = new PDO('sqlite:'.config('sesame.buffer.path'));
+    $copy = $pdo->query('SELECT seq, body FROM sends')->fetchAll(PDO::FETCH_ASSOC);
+
+    IngestBuffer::drain();
+    // Put the rows back, as if the delete never ran.
+    foreach ($copy as $row) {
+        $pdo->prepare('INSERT INTO sends (seq, body) VALUES (?, ?)')->execute([$row['seq'], $row['body']]);
+    }
+    IngestBuffer::drain();
+
+    expect(DB::table('sesame_messages')->count())->toBe(3)
+        ->and(DB::table('sesame_events')->count())->toBe(6)
+        ->and(IngestBuffer::depth())->toBe(0);
 });
 
 it('returns SES errors the SDK maps to their exception codes', function (callable $request, string $code, int $status): void {
@@ -65,8 +108,9 @@ it('returns SES errors the SDK maps to their exception codes', function (callabl
 ]);
 
 it('throttles above the account max send rate and logs the refusal', function (): void {
+    holdDrains($this);
     $this->account->forceFill(['max_send_rate' => 2])->save();
-    AccountDirectory::write();
+    AccountDirectory::forget();
     $client = sesClient($this, $this->akid);
     $codes = [];
     // Stay inside one wall-clock second so the window is a single bucket.
@@ -83,14 +127,18 @@ it('throttles above the account max send rate and logs the refusal', function ()
     }
 
     expect($codes)->toBe(['ok', 'ok', 'TooManyRequestsException', 'TooManyRequestsException'])
-        ->and(collect(walRecords())->where('k', 'throttled'))->toHaveCount(2);
+        ->and(collect(bufferRows()['refusals'])->where('kind', 'throttled'))->toHaveCount(2);
+
+    IngestBuffer::drain();
+    expect(DB::table('sesame_send_refusals')->where('kind', 'throttled')->count())->toBe(2);
 });
 
 it('rejects at send time when the lottery draws Reject', function (): void {
+    holdDrains($this);
     $this->account->forceFill(['rate_overrides' => ['reject' => 100]])->save();
-    AccountDirectory::write();
+    AccountDirectory::forget();
 
     expect(fn () => sesClient($this, $this->akid)->sendEmail(['Destination' => ['ToAddresses' => ['load-1@load.crm.test']], 'Content' => ['Raw' => ['Data' => rawMime('load-1@load.crm.test')]]]))
         ->toThrow(SesV2Exception::class, 'rejected');
-    expect(collect(walRecords())->pluck('k')->all())->toBe(['rejected']);
+    expect(collect(bufferRows()['refusals'])->pluck('kind')->all())->toBe(['rejected']);
 });

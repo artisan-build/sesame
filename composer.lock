@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "d3cad387f25356035680ff76278e716f",
+    "content-hash": "cdc6265ac002e85751ef2e670d753fdd",
     "packages": [
         {
             "name": "aws/aws-crt-php",
@@ -214,7 +214,8 @@
                 "issues": "https://github.com/aws/aws-sdk-php/issues",
                 "source": "https://github.com/aws/aws-sdk-php/tree/3.403.0"
             },
-            "time": "2026-11-05T19:10:30+00:00"
+            "time": "2026-11-05T19:10:30+00:00",
+            "published-time": "2026-11-05T19:18:50+00:00"
         },
         {
             "name": "bacon/bacon-qr-code",

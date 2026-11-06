@@ -3,9 +3,11 @@
 namespace App\Sesame\Http;
 
 use App\Models\SesameRun;
+use App\Sesame\Ingest\IngestBuffer;
 use App\Sesame\RunReport;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Ground truth for reconciliation, authenticated with the account's truth
@@ -24,6 +26,24 @@ final class RunController
     public function summary(Request $request, string $run): JsonResponse
     {
         return new JsonResponse(RunReport::summary($this->authorize($request, $run)));
+    }
+
+    /**
+     * Classify MessageIds the client holds that the truth API does not:
+     * lost in an ingest buffer (a simulator loss to exclude, not a client
+     * finding), still undrained (ask again), or unknown (a client finding).
+     */
+    public function missing(Request $request, string $run): JsonResponse
+    {
+        $this->authorize($request, $run);
+        $ids = array_slice(array_values(array_filter((array) $request->json('message_ids', []), is_string(...))), 0, 5000);
+        $known = DB::table('sesame_messages')->whereIn('message_id', $ids)->pluck('message_id')->flip();
+        $out = [];
+        foreach ($ids as $id) {
+            $out[$id] = isset($known[$id]) ? ['status' => 'present'] : IngestBuffer::lossFor($id);
+        }
+
+        return new JsonResponse(['message_ids' => $out]);
     }
 
     private function authorize(Request $request, string $run): SesameRun

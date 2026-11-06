@@ -4,17 +4,18 @@ namespace App\Sesame\Ingest;
 
 use App\Sesame\Outcome;
 use App\Sesame\OutcomeLottery;
-use App\Sesame\Wal\WriteAheadLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
+use function Illuminate\Support\defer;
+
 /**
  * POST /v2/email/outbound-emails — SES v2 SendEmail with Content.Raw.
  *
- * Fast acknowledgement: verify the request shape, draw outcomes, append to
- * the write-ahead log and return the MessageId, all before any database
- * write. The data plane does everything else.
+ * Verify the request shape, draw outcomes, plan every event, commit them to
+ * this instance's IngestBuffer and return the MessageId. The buffer drains
+ * to Postgres after the response; delivery is the sweeper's and the queue's.
  */
 final class SendEmailController
 {
@@ -26,30 +27,24 @@ final class SendEmailController
             if ($account === null) {
                 throw SesError::unrecognizedClient();
             }
+            // Drain after the response is sent, on this same instance: the
+            // buffer is a local file no other instance can see.
+            defer(fn () => IngestBuffer::drain(), 'sesame-drain');
             if ($account['paused']) {
                 throw SesError::paused();
             }
-            if (! RateGate::admit((string) $account['id'], (int) $account['max_send_rate'])) {
-                $this->log($account, 'throttled');
-                throw SesError::throttled();
-            }
-
             $send = SesRequest::parse($request->getContent());
             $outcomes = [];
             foreach ($send->recipients as $recipient) {
                 $outcomes[$recipient] = OutcomeLottery::draw((int) $account['seed'], $recipient, $account['rates'], $account['timing']);
                 if ($outcomes[$recipient]->kind === Outcome::REJECT) {
-                    $this->log($account, 'rejected');
+                    IngestBuffer::refusal($account, 'rejected', (int) floor(microtime(true) * 1000));
                     throw SesError::rejected();
                 }
             }
 
             $acceptedMs = (int) floor(microtime(true) * 1000);
-            $messageId = sprintf('0100%012x-%s-000000', $acceptedMs, Str::uuid());
-
-            WriteAheadLog::fromConfig()->append([
-                'k' => 'm',
-                'id' => $messageId,
+            $messageId = IngestBuffer::accept($account, [
                 'a' => $account['id'],
                 'r' => $account['run_id'],
                 't' => $acceptedMs,
@@ -64,6 +59,9 @@ final class SendEmailController
                 'o' => array_map(fn (Outcome $o): array => ['k' => $o->kind, 's' => $o->subType], $outcomes),
                 'ev' => EventPlan::for($acceptedMs, $outcomes),
             ]);
+            if ($messageId === null) {
+                throw SesError::throttled();
+            }
 
             return new JsonResponse(['MessageId' => $messageId], 200, ['x-amzn-RequestId' => (string) Str::uuid()]);
         } catch (SesError $error) {
@@ -72,15 +70,5 @@ final class SendEmailController
                 'x-amzn-RequestId' => (string) Str::uuid(),
             ]);
         }
-    }
-
-    /**
-     * Throttles and rejections are counted through the same log, still without a database write.
-     *
-     * @param  array<string, mixed>  $account
-     */
-    private function log(array $account, string $kind): void
-    {
-        WriteAheadLog::fromConfig()->append(['k' => $kind, 'a' => $account['id'], 'r' => $account['run_id'], 't' => (int) floor(microtime(true) * 1000)]);
     }
 }

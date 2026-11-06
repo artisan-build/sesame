@@ -6,9 +6,11 @@ with no long tail, the data plane is Laravel; otherwise it is Rust.
 
 This repo benchmarks the real ingest endpoint, not a throwaway stub. `POST
 /v2/email/outbound-emails` verifies the request shape, reads the MIME headers, draws outcomes,
-plans events, appends one fsynced JSON line to the write-ahead log and returns a `MessageId`.
-That is the brief's stub contract (parse, draw, enqueue, return a `MessageId`), with the WAL
-standing in for the enqueue.
+plans events, commits the send to the per-instance SQLite ingest buffer and returns a `MessageId`.
+The buffer is drained to Postgres after the response. That is the brief's stub contract (parse,
+draw, enqueue, return a `MessageId`). The 10-minute runs in `docs/evidence/benchmark-run-*.json`
+predate the buffer: they appended to the old fsynced write-ahead log instead. The buffer runs are
+in `docs/evidence/ingest-buffer-loss.json`.
 
 Results and their interpretation are in [`docs/poc-report.md`](../docs/poc-report.md#runtime-benchmark).
 Per-minute numbers for both 10-minute runs are in [`docs/evidence/`](../docs/evidence/).
