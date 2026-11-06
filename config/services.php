@@ -26,6 +26,15 @@ return [
         'key' => env('AWS_ACCESS_KEY_ID'),
         'secret' => env('AWS_SECRET_ACCESS_KEY'),
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
+        // CRM-side wiring from the Sesame brief, used here by the local CRM
+        // harness. Staging points it at Sesame; production refuses to boot if set.
+        'endpoint' => env('SES_ENDPOINT'),
+    ],
+
+    'sns' => [
+        'cert_host_pattern' => env('SNS_CERT_HOST_PATTERN'), // staging: /^<sim-host>$/
+        // Local orb only: the CA that signed the local TLS proxy's certificate.
+        'ca_bundle' => env('SNS_CERT_CA_BUNDLE'),
     ],
 
     'slack' => [

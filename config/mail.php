@@ -75,6 +75,16 @@ return [
             'channel' => env('MAIL_LOG_CHANNEL'),
         ],
 
+        // LOCAL CRM HARNESS: stock ses-v2 mailer, as Growth uses it. Keys are
+        // applied at runtime from crm:harness:connect; endpoint comes from
+        // services.ses.endpoint. SDK retries are off so throttling reaches the job.
+        'crm-ses' => [
+            'transport' => 'ses-v2',
+            'retries' => 0,
+            'http' => ['connect_timeout' => 3, 'timeout' => 10],
+            'options' => ['ConfigurationSetName' => 'crm-load'],
+        ],
+
         'array' => [
             'transport' => 'array',
         ],
