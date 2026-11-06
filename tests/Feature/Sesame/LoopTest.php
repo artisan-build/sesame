@@ -92,7 +92,7 @@ it('closes the loop with every event reconciled, including forced bounces and co
     connectHarness(['duplicate' => 30, 'out_of_order' => 30, 'delay' => 20, 'soft_bounce' => 10]);
     sendLoad(1000); // contact 200, 400, ... force bounces; 500 and 1000 force complaints
 
-    runDelivery($this, 60);
+    runDelivery($this, 240); // a safety bound only: CI runners took 99 s where an orb takes 50
 
     expect(DB::table('harness_outbound_messages')->where('state', 'accepted')->count())->toBe(1000);
     $exit = Artisan::call('crm:reconcile', ['--json' => $report = tempnam(sys_get_temp_dir(), 'rec')]);
