@@ -1,0 +1,28 @@
+* text=auto eol=lf
+
+*.blade.php diff=html
+*.css diff=css
+*.html diff=html
+*.md diff=markdown
+*.php diff=php
+
+CHANGELOG.md export-ignore
+README.md export-ignore
+
+# These describe the KIT itself, so they must not ship into scaffolded projects — a project born
+# asserting "PR target repo: artisan-build/laravel-nodeless" sends agents at the wrong repository.
+# Generic replacements live in stubs/ and are installed by post-create-project-cmd. Anchored with a
+# leading slash so stubs/CLAUDE.md is NOT caught by this rule.
+/CLAUDE.md export-ignore
+/.solo export-ignore
+
+# Same rule, applied to a workflow rather than docs. This one asserts things about the REPOSITORY it
+# lives in — that "Allow auto-merge" is on and that `main` has required status checks — and both are
+# false in a freshly scaffolded project. GitHub only offers auto-merge on a PR that cannot merge
+# immediately, so in a repo without required checks there is nothing to wait for and the workflow
+# would merge dependency updates with no CI gate at all. Auto-merge should be opted into by someone
+# who has also done the branch-protection work that makes it safe; README.md says how.
+#
+# .github/dependabot.yml is deliberately NOT listed here — it stays true in any Laravel repo, so
+# scaffolded projects get dependency updates for free and can delete the file if they'd rather not.
+/.github/workflows/dependabot-auto-merge.yml export-ignore

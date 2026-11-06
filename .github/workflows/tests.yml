@@ -1,0 +1,58 @@
+name: tests
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+      - master
+      - workos
+  pull_request:
+    branches:
+      - develop
+      - main
+      - master
+      - workos
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php-version: ['8.5']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          tools: composer:v2
+          coverage: xdebug
+
+      - name: Install Dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Copy Environment File
+        run: cp .env.example .env
+
+      - name: Generate Application Key
+        run: php artisan key:generate
+
+      - name: Run PHPStan
+        run: composer stan
+
+      - name: Run Tests
+        run: ./vendor/bin/pest
+
+      # Blocking, matching how `composer ready` already treats audit locally.
+      #
+      # Runs last on purpose: an advisory can be published against a dependency at any moment, with
+      # no commit here to trigger it, so this step can fail on a PR that changed nothing related.
+      # Keeping it after the tests means the test signal is still there when that happens.
+      - name: Run Security Audit
+        run: composer audit
