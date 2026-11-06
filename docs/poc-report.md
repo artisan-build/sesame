@@ -88,6 +88,29 @@ out). Evidence: [`evidence/scheduler-free-plateau-reconcile.json`](evidence/sche
 - Afterwards the queue held **0 jobs**, nothing was scheduled, and nothing ran: an idle install
   has nothing that would keep it awake.
 
+**Delivery workers SIGKILLed repeatedly, still no scheduler (orb, fresh database).** Same stack.
+30/s for 90 s, run `b-kill`, with complaint and delayed-final timing compressed to at most 60 and
+90 s. Ten times, 6 to 7 s apart, every delivery worker was killed with SIGKILL and restarted
+about a second later. Evidence: [`evidence/scheduler-free-worker-kill-reconcile.json`](evidence/scheduler-free-worker-kill-reconcile.json)
+and [`evidence/scheduler-free-worker-kill-events.log`](evidence/scheduler-free-worker-kill-events.log).
+
+- Kills left up to 241 events leased to dead jobs. Only the wakeups those leases queued for their
+  own expiry could recover them.
+- `crm:reconcile` exit 0: 2,699 messages compared, **0 mismatches**, 0 lost; 5,414 of 5,414 events
+  delivered, 0 dropped.
+- 241 events went out 50 to 61.4 s late, which is the 60 s lease plus one wakeup. 13 killed
+  `DeliverEvents` jobs ended in `failed_jobs` (re-handed out by the queue, over `tries=1`), as
+  designed: the lease, not the queue, retries. No `SweepDue` failed.
+- A killed job may already have posted some of its events, so those can arrive twice. That is
+  SNS's own at-least-once behaviour; the harness deduplicates on the SNS MessageId.
+
+An earlier attempt at this run lost 4 accepted sends. The cause was the test suite, not Sesame:
+`composer ready` ran alongside it, and non-Sesame feature tests, whose requests now drain after
+every response, drained the live server's shared default tmp buffer into the test database and
+rolled back. Reproduced with a single unrelated test; `phpunit.xml` now gives tests their own
+buffer path. It is a local-machine hazard only: Cloud instances never share a tmp directory with
+a test run.
+
 What this costs, plainly:
 
 - **Nothing drains an instance that stops getting requests.** If the after-response drain of the

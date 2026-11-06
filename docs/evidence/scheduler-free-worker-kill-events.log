@@ -1,0 +1,11 @@
+kill 1 15:32:04 leased_by_live_leases=0
+kill 2 15:32:10 leased_by_live_leases=0
+kill 3 15:32:17 leased_by_live_leases=18
+kill 4 15:32:24 leased_by_live_leases=68
+kill 5 15:32:31 leased_by_live_leases=102
+kill 6 15:32:38 leased_by_live_leases=125
+kill 7 15:32:45 leased_by_live_leases=157
+kill 8 15:32:52 leased_by_live_leases=209
+kill 9 15:32:59 leased_by_live_leases=207
+kill 10 15:33:06 leased_by_live_leases=241
+kills done 15:33:12
