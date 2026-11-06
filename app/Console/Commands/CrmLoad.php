@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\CrmHarness\Clock;
 use App\CrmHarness\LoadContacts;
 use App\CrmHarness\SendLoadMessage;
 use Illuminate\Console\Command;
@@ -48,7 +49,7 @@ class CrmLoad extends Command
             $due = min($total, (int) floor((microtime(true) - $start) * $rate) + 1);
             while ($dispatched < $due) {
                 $id = DB::table('harness_outbound_messages')->insertGetId([
-                    'contact_id' => $contacts[$dispatched], 'load_run' => $run, 'dispatched_at' => now(),
+                    'contact_id' => $contacts[$dispatched], 'load_run' => $run, 'dispatched_at' => Clock::now(),
                 ]);
                 SendLoadMessage::dispatch($id);
                 $dispatched++;

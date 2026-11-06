@@ -48,7 +48,7 @@ final class SendLoadMessage implements ShouldQueue
 
             return;
         }
-        DB::table('harness_outbound_messages')->where('id', $row->id)->whereNull('started_at')->update(['started_at' => now()]);
+        DB::table('harness_outbound_messages')->where('id', $row->id)->whereNull('started_at')->update(['started_at' => Clock::now()]);
 
         Settings::configureMailer();
         try {
@@ -71,7 +71,7 @@ final class SendLoadMessage implements ShouldQueue
         $messageId = $original instanceof Message ? $original->getHeaders()->get('X-SES-Message-ID')?->getBodyAsString() : null;
         DB::transaction(function () use ($row, $messageId): void {
             DB::table('harness_outbound_messages')->where('id', $row->id)->update([
-                'state' => 'accepted', 'provider_message_id' => $messageId, 'accepted_at' => now(),
+                'state' => 'accepted', 'provider_message_id' => $messageId, 'accepted_at' => Clock::now(),
             ]);
             if (is_string($messageId)) {
                 Reconciler::apply($messageId); // events may already have arrived

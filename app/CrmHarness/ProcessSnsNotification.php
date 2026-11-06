@@ -46,11 +46,11 @@ final class ProcessSnsNotification implements ShouldQueue
                     'tags' => json_encode($event['mail']['tags'] ?? (object) []),
                     'event_at' => $event[lcfirst($type)]['timestamp'] ?? $event['mail']['timestamp'] ?? null,
                     'received_at' => $receipt->received_at,
-                    'processed_at' => now(),
+                    'processed_at' => Clock::now(),
                 ]);
                 Reconciler::apply($providerId);
             }
-            DB::table('harness_sns_receipts')->where('id', $receipt->id)->update(['processed_at' => now()]);
+            DB::table('harness_sns_receipts')->where('id', $receipt->id)->update(['processed_at' => Clock::now()]);
         });
     }
 }

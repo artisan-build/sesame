@@ -1,0 +1,17 @@
+Dispatching 27000 sends at 30/s as run [plateau-30x900].
+   59s  1800 dispatched
+  119s  3600 dispatched
+  179s  5400 dispatched
+  239s  7200 dispatched
+  299s  9000 dispatched
+  359s  10800 dispatched
+  419s  12600 dispatched
+  479s  14400 dispatched
+  539s  16200 dispatched
+  599s  18000 dispatched
+  659s  19800 dispatched
+  719s  21600 dispatched
+  779s  23400 dispatched
+  839s  25200 dispatched
+  899s  27000 dispatched
+Dispatched 27000 in 900.0s.

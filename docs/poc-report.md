@@ -14,7 +14,7 @@ Cloud, AWS, or real email.
 
 | Question | Answer | Verdict |
 | --- | --- | --- |
-| Does the loop close at 30/s with every event reconciled? | Yes, on the local harness. 27,000 sends over a 15-minute plateau, {{EVENTS}} SNS notifications, {{MISMATCHES}} reconciliation mismatches. | Demonstrated locally, not against Growth staging |
+| Does the loop close at 30/s with every event reconciled? | Yes, on the local harness. 27,000 sends over a 15-minute plateau, 54,252 SNS notifications, 0 reconciliation mismatches. | Demonstrated locally, not against Growth staging |
 | Does the Octane ingest hold single-digit p99 at 300/s for 10 minutes? | Not on this host, but a no-PHP control failed the same way. In quiet seconds Octane's p99 was 9.83 ms. | **Not decidable here.** Laravel is provisional; rerun on the target host |
 | Are notifications signed in a format the real validator accepts? | Yes. All three SNS types are verified with `aws/aws-php-sns-message-validator` in tests, and live over HTTPS during the plateau. | Test-verified and live in the orb |
 | Does a restart resume a run? | Yes. WAL records are ingested exactly once, and pending events are rebuilt from Postgres. | Test-verified; not exercised under live load |
@@ -107,15 +107,23 @@ Results ([`evidence/plateau-reconcile.json`](evidence/plateau-reconcile.json)):
 | Achieved rate at Sesame, per second | mean 29.97, p1 27, p99 33, min 14, max 44, no empty seconds | |
 | Worst rolling 2-minute achieved rate | 29.86/s (99.5% of target) | below 95% for 2 min |
 | `TooManyRequestsException` | 0 | above 1% |
-| Send latency p50 / p95 (dispatched to accepted, CRM side) | {{SEND_P50}} / {{SEND_P95}} ms | +25% vs baseline |
-| Max queue lag | {{QUEUE_LAG}} s | above 30 s |
-| Webhook response p50 / p95 / p99 / max | {{WH_P50}} / {{WH_P95}} / {{WH_P99}} / {{WH_MAX}} ms | +25%, or above 1 s |
-| Webhook 5xx and timeouts | {{WH_5XX}} | above 0.1% |
-| Webhook 4xx (events lost) | {{WH_4XX}} | any |
-| Event lag p50 / p95 (received to CRM state) | {{EV_P50}} / {{EV_P95}} ms | +25% vs baseline |
-| Outcomes drawn | {{OUTCOMES}} | |
-| Events delivered / dropped / pending after drain | {{EV_DELIVERED}} / {{EV_DROPPED}} / {{EV_PENDING}} | |
-| **Reconciliation mismatches** | **{{MISMATCHES}}** of {{COMPARED}} messages compared | any |
+| Send latency p50 / p95 (dispatched to accepted, CRM side) | 40.0 / 114.1 ms (p99 526) in a 50 s, 1,500-send rerun; see note | +25% vs baseline |
+| Max queue lag | about 1 s (plateau, 1 s resolution); 0.655 s in the rerun | above 30 s |
+| Webhook response p50 / p95 / p99 / max | 24.6 / 48.5 / 92.2 / 676.6 ms over 54,252 attempts | +25%, or above 1 s |
+| Webhook 5xx and timeouts | 0 | above 0.1% |
+| Webhook 4xx (events lost) | 0 | any |
+| Event lag p50 / p95 (received to CRM state) | 69 / 249 ms (p99 870) in the rerun; see note | +25% vs baseline |
+| Outcomes drawn | delivered 26,220; hard bounce 311; soft bounce 275; DeliveryDelay 132; complaint 62 (411 contacts suppressed) | |
+| Events delivered / dropped / pending after drain | 54,252 (54,194 distinct + 58 duplicates) / 0 / 0 | |
+| **Reconciliation mismatches** | **0** of 27,000 messages compared | any |
+
+**Note on CRM-side timings.** During the plateau the harness wrote timestamps through Laravel's
+query builder, which stores whole seconds, so send latency, queue lag and event lag came out as 0
+or 1000 ms and are not usable. The harness now writes millisecond timestamps (`App\CrmHarness\Clock`).
+The send-latency and event-lag figures above come from a 50 s, 1,500-send rerun at 30/s
+(run `latency-30x50`, seed 20261107) on the same stack, not from the 15-minute plateau. Its p99s
+include the orb's stalls. Simulator-side numbers (achieved rate, webhook latency, reconciliation)
+come from the plateau itself and were measured at millisecond resolution.
 
 Short dips to 14–24/s, each followed by a 36–44/s catch-up second, line up with the orb stalls
 described under the benchmark. `crm:load` paces by wall clock, so it catches up after a stall.

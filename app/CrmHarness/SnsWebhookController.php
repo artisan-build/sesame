@@ -40,7 +40,7 @@ final class SnsWebhookController
                 'sns_message_id' => $message['MessageId'],
                 'type' => $message['Type'],
                 'raw' => $request->getContent(),
-                'received_at' => now(),
+                'received_at' => Clock::now(),
             ]));
         } catch (Throwable) {
             return new Response('Storage unavailable.', 503); // retryable
@@ -55,7 +55,7 @@ final class SnsWebhookController
                 Http::connectTimeout(3)->timeout(5)
                     ->withOptions(['allow_redirects' => false, 'verify' => config('services.sns.ca_bundle') ?: true])
                     ->get($message['SubscribeURL'])->throw();
-                DB::table('harness_sns_receipts')->where('sns_message_id', $message['MessageId'])->update(['processed_at' => now()]);
+                DB::table('harness_sns_receipts')->where('sns_message_id', $message['MessageId'])->update(['processed_at' => Clock::now()]);
             } catch (Throwable) {
                 DB::table('harness_sns_receipts')->where('sns_message_id', $message['MessageId'])->delete();
 
