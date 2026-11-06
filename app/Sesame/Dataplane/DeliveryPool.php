@@ -7,6 +7,7 @@ use GuzzleHttp\Exception\TransferException;
 use GuzzleHttp\Handler\CurlMultiHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Promise\Utils;
+use Illuminate\Support\Sleep;
 use Psr\Http\Message\ResponseInterface;
 
 /**
@@ -94,7 +95,7 @@ final class DeliveryPool
         $deadline = microtime(true) + $maxSeconds;
         while ($this->inFlight > 0 && microtime(true) < $deadline) {
             $done = array_merge($done, $this->tick());
-            usleep(1000);
+            Sleep::usleep(1000);
         }
 
         return array_merge($done, $this->tick());

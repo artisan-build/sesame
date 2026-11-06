@@ -20,7 +20,7 @@ final class RunReport
             ->orderBy('message_id')->limit($limit)
             ->get(['message_id', 'accepted_at', 'destination', 'tags', 'outcomes']);
         $events = DB::table('sesame_events')->whereIn('message_id', $messages->pluck('message_id'))
-            ->orderBy('due_at')
+            ->oldest('due_at')
             ->get(['message_id', 'sns_message_id', 'type', 'recipient', 'duplicate_of', 'status', 'attempts', 'last_status', 'latency_ms', 'due_at', 'delivered_at'])
             ->groupBy('message_id');
 

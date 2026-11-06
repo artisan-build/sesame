@@ -6,7 +6,7 @@ use App\CrmHarness\SendLoadMessage;
 use App\Sesame\Accounts;
 use App\Sesame\Sns\Signer;
 
-it('refuses to boot production with simulator config', function (string $key, string $value) {
+it('refuses to boot production with simulator config', function (string $key, string $value): void {
     config([$key => $value]);
 
     CrmHarnessServiceProvider::guard(true);
@@ -15,7 +15,7 @@ it('refuses to boot production with simulator config', function (string $key, st
     ['services.sns.cert_host_pattern', '/^sesame\.test$/'],
 ])->throws(RuntimeException::class, 'SES simulator config present in production.');
 
-it('boots production without simulator config and staging with it', function () {
+it('boots production without simulator config and staging with it', function (): void {
     config(['services.ses.endpoint' => null, 'services.sns.cert_host_pattern' => null]);
     CrmHarnessServiceProvider::guard(true);
 
@@ -23,20 +23,20 @@ it('boots production without simulator config and staging with it', function () 
     CrmHarnessServiceProvider::guard(false);
 })->throwsNoExceptions();
 
-it('refuses to seed load contacts in production', function () {
+it('refuses to seed load contacts in production', function (): void {
     app()->detectEnvironment(fn () => 'production');
 
     LoadContacts::seed(1);
 })->throws(RuntimeException::class);
 
-it('refuses to address anything outside the reserved load domain', function () {
+it('refuses to address anything outside the reserved load domain', function (): void {
     $contact = DB::table('harness_contacts')->insertGetId(['email' => 'someone@example.com']);
     $id = DB::table('harness_outbound_messages')->insertGetId(['contact_id' => $contact, 'load_run' => 'x', 'dispatched_at' => now()]);
 
     (new SendLoadMessage($id))->handle();
 })->throws(RuntimeException::class, 'reserved load domain');
 
-it('answers 403 to a missing type header or bad signature, and 200 to a duplicate', function () {
+it('answers 403 to a missing type header or bad signature, and 200 to a duplicate', function (): void {
     sesameSetUp();
     $account = Accounts::create('webhook', null, 'healthy', 10, 1)['account'];
     $envelope = Signer::sign([

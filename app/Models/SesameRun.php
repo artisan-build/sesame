@@ -19,6 +19,8 @@ use Illuminate\Support\Carbon;
  * @property Carbon $started_at
  * @property Carbon|null $ended_at
  * @property array<string, mixed>|null $summary
+ *
+ * @mixin IdeHelperSesameRun
  */
 class SesameRun extends Model
 {

@@ -6,8 +6,9 @@ use App\Sesame\Ingest\AccountDirectory;
 use App\Sesame\Sns\SesEvent;
 use App\Sesame\Sns\Signer;
 use App\Sesame\Wal\WriteAheadLog;
-use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 use PDO;
 use Pdo\Pgsql;
@@ -20,9 +21,9 @@ use Pdo\Pgsql;
  */
 final class Dataplane
 {
-    private TimingWheel $wheel;
+    private readonly TimingWheel $wheel;
 
-    private WalIngester $ingester;
+    private readonly WalIngester $ingester;
 
     /** @var array<string, object> account id => account row */
     private array $accounts = [];
@@ -60,11 +61,11 @@ final class Dataplane
         $this->listening = true;
         $this->reloadAccounts();
 
-        DB::table('sesame_events')->where('status', 'pending')->orderBy('due_at')
+        DB::table('sesame_events')->where('status', 'pending')->oldest('due_at')
             ->select(['id', 'account_id', 'due_at'])
             ->chunk(5000, function ($rows): void {
                 foreach ($rows as $row) {
-                    $this->wheel->add($row->id, $row->account_id, (int) Carbon::parse((string) $row->due_at)->getPreciseTimestamp(3));
+                    $this->wheel->add($row->id, $row->account_id, (int) Date::parse((string) $row->due_at)->getPreciseTimestamp(3));
                 }
             });
     }
@@ -94,7 +95,7 @@ final class Dataplane
         $tickUs = (int) config('sesame.dataplane.tick_ms') * 1000;
         while (! $shouldStop()) {
             if (! $this->tick()) {
-                usleep($tickUs);
+                Sleep::usleep($tickUs);
             }
         }
         $this->collect($this->pool->drain());
@@ -103,7 +104,7 @@ final class Dataplane
 
     public function pending(): int
     {
-        return $this->wheel->size() + array_sum(array_map('count', $this->parked)) + $this->pool->inFlight();
+        return $this->wheel->size() + array_sum(array_map(count(...), $this->parked)) + $this->pool->inFlight();
     }
 
     private function pollConfig(): bool

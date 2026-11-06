@@ -95,7 +95,7 @@ final class WriteAheadLog
     /** @return list<string> */
     public function segments(): array
     {
-        $names = array_map('basename', glob($this->directory.'/*.wal') ?: []);
+        $names = array_map(basename(...), glob($this->directory.'/*.wal') ?: []);
         sort($names);
 
         return $names;

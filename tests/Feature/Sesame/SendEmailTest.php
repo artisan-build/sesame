@@ -3,8 +3,9 @@
 use App\Sesame\Accounts;
 use App\Sesame\Ingest\AccountDirectory;
 use Aws\SesV2\Exception\SesV2Exception;
+use Illuminate\Support\Sleep;
 
-beforeEach(function () {
+beforeEach(function (): void {
     sesameSetUp();
     $created = Accounts::create('ingest', null, 'healthy', 1000, 99);
     AccountDirectory::write();
@@ -17,7 +18,7 @@ function rawMime(string $to, string $extraHeaders = ''): string
     return "From: Growth <growth@load.crm.test>\r\nTo: {$to}\r\nSubject: Hi\r\n there\r\nMessage-ID: <m1@load.crm.test>\r\nDate: Fri, 06 Nov 2026 08:00:00 +0000\r\n{$extraHeaders}MIME-Version: 1.0\r\n\r\nBody that is never parsed\r\nFrom: not-a-header@x.test\r\n";
 }
 
-it('accepts a Laravel-shaped SendEmail through the real SDK and returns an SES-shaped MessageId', function () {
+it('accepts a Laravel-shaped SendEmail through the real SDK and returns an SES-shaped MessageId', function (): void {
     $result = sesClient($this, $this->akid)->sendEmail([
         'Source' => 'growth@load.crm.test', // Laravel's v1-style key, tolerated
         'ConfigurationSetName' => 'crm-load',
@@ -40,17 +41,17 @@ it('accepts a Laravel-shaped SendEmail through the real SDK and returns an SES-s
         ->and(array_column($record['ev'], 'type'))->toBe(['Send', 'Delivery']);
 });
 
-it('makes no database write on the ingest path', function () {
+it('makes no database write on the ingest path', function (): void {
     DB::enableQueryLog();
     sesClient($this, $this->akid)->sendEmail([
         'Destination' => ['ToAddresses' => ['success@load.crm.test']],
         'Content' => ['Raw' => ['Data' => rawMime('success@load.crm.test')]],
     ]);
 
-    expect(collect(DB::getQueryLog())->pluck('query')->filter(fn ($q) => ! str_starts_with(strtolower(ltrim($q)), 'select'))->all())->toBe([]);
+    expect(collect(DB::getQueryLog())->pluck('query')->reject(fn ($q): bool => str_starts_with(strtolower(ltrim($q)), 'select'))->all())->toBe([]);
 });
 
-it('returns SES errors the SDK maps to their exception codes', function (callable $request, string $code, int $status) {
+it('returns SES errors the SDK maps to their exception codes', function (callable $request, string $code, int $status): void {
     try {
         $request($this);
         $this->fail('expected an SES error');
@@ -63,14 +64,14 @@ it('returns SES errors the SDK maps to their exception codes', function (callabl
     'missing recipient' => [fn ($t) => sesClient($t, $t->akid)->sendEmail(['Destination' => ['ToAddresses' => []], 'Content' => ['Raw' => ['Data' => "Subject: x\r\n\r\nbody"]]]), 'BadRequestException', 400],
 ]);
 
-it('throttles above the account max send rate and logs the refusal', function () {
+it('throttles above the account max send rate and logs the refusal', function (): void {
     $this->account->forceFill(['max_send_rate' => 2])->save();
     AccountDirectory::write();
     $client = sesClient($this, $this->akid);
     $codes = [];
     // Stay inside one wall-clock second so the window is a single bucket.
     while (microtime(true) - floor(microtime(true)) > 0.7) {
-        usleep(10000);
+        Sleep::usleep(10000);
     }
     for ($i = 0; $i < 4; $i++) {
         try {
@@ -85,7 +86,7 @@ it('throttles above the account max send rate and logs the refusal', function ()
         ->and(collect(walRecords())->where('k', 'throttled'))->toHaveCount(2);
 });
 
-it('rejects at send time when the lottery draws Reject', function () {
+it('rejects at send time when the lottery draws Reject', function (): void {
     $this->account->forceFill(['rate_overrides' => ['reject' => 100]])->save();
     AccountDirectory::write();
 

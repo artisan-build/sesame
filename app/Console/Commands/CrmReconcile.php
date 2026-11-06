@@ -7,6 +7,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Sleep;
 
 /**
  * LOCAL CRM-COMPATIBLE HARNESS stand-in for the CRM reconcile job. Pages
@@ -38,7 +39,7 @@ class CrmReconcile extends Command
             $drained = $pendingSim === 0 && $pendingCrm === 0;
             if (! $drained && time() < $deadline) {
                 $this->line("waiting: simulator pending={$pendingSim} crm pending={$pendingCrm}");
-                sleep(10);
+                Sleep::sleep(10);
             }
         } while (! $drained && time() < $deadline);
 

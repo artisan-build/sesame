@@ -14,9 +14,9 @@ use RuntimeException;
  * COPY. The WAL checkpoint commits in the same transaction as the rows, so
  * every record is written exactly once across crashes and restarts.
  */
-final class WalIngester
+final readonly class WalIngester
 {
-    public function __construct(private readonly WriteAheadLog $wal, private readonly int $batch = 2000) {}
+    public function __construct(private WriteAheadLog $wal, private int $batch = 2000) {}
 
     /**
      * @param  array<string, string>  $accountNumbers  account id => simulated AWS account number
