@@ -7,6 +7,7 @@ use App\CrmHarness\LoadContacts;
 use App\CrmHarness\SendLoadMessage;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Sleep;
 
 /**
  * LOCAL CRM-COMPATIBLE HARNESS stand-in for Growth's `crm:load`. Dispatches
@@ -51,14 +52,14 @@ class CrmLoad extends Command
                 $id = DB::table('harness_outbound_messages')->insertGetId([
                     'contact_id' => $contacts[$dispatched], 'load_run' => $run, 'dispatched_at' => Clock::now(),
                 ]);
-                SendLoadMessage::dispatch($id);
+                dispatch(new SendLoadMessage($id));
                 $dispatched++;
             }
             if ($dispatched >= $printed + $rate * 60) {
                 $printed = $dispatched;
                 $this->line(sprintf('%5ds  %d dispatched', (int) (microtime(true) - $start), $dispatched));
             }
-            usleep(2000);
+            Sleep::usleep(2000);
         }
         $this->info(sprintf('Dispatched %d in %.1fs.', $dispatched, microtime(true) - $start));
 

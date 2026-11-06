@@ -38,9 +38,7 @@ final class TimingWheel
     public function popDue(int $nowMs, int $limit): array
     {
         $now = intdiv($nowMs, self::SLOT_MS);
-        if ($this->cursor === null) {
-            $this->cursor = $this->slots === [] ? $now : min(array_keys($this->slots));
-        }
+        $this->cursor ??= $this->slots === [] ? $now : min(array_keys($this->slots));
         $due = [];
         while ($this->cursor <= $now && count($due) < $limit) {
             if (isset($this->slots[$this->cursor])) {

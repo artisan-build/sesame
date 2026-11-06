@@ -29,6 +29,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string $private_key
  * @property string $certificate
  * @property string|null $current_run_id
+ *
+ * @mixin IdeHelperSesameAccount
  */
 class SesameAccount extends Model
 {

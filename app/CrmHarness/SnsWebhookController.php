@@ -66,7 +66,7 @@ final class SnsWebhookController
         }
 
         if ($message['Type'] === 'Notification') {
-            ProcessSnsNotification::dispatch($message['MessageId']);
+            dispatch(new ProcessSnsNotification($message['MessageId']));
         }
 
         return new Response('', 200);

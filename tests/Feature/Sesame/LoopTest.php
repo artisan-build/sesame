@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Sleep;
 use Tests\TestCase;
 
 /*
@@ -20,7 +21,7 @@ use Tests\TestCase;
  * SNS POST -> harness webhook (real MessageValidator) -> queued processing ->
  * reconciliation against Sesame's ground truth.
  */
-beforeEach(function () {
+beforeEach(function (): void {
     sesameSetUp();
     $test = $this;
     // The harness's outbound HTTP (SubscribeURL GET, truth API) reaches Sesame in-process.
@@ -69,7 +70,7 @@ function runDataplane(TestCase $test, float $seconds = 15, ?Dataplane $dataplane
         if ($settled >= 5) {
             break;
         }
-        usleep(5000);
+        Sleep::usleep(5000);
     }
 
     return $dataplane;
@@ -79,11 +80,11 @@ function sendLoad(int $count, string $run = 'test-run'): void
 {
     LoadContacts::seed($count);
     foreach (DB::table('harness_contacts')->orderBy('id')->limit($count)->pluck('id') as $contactId) {
-        SendLoadMessage::dispatch(DB::table('harness_outbound_messages')->insertGetId(['contact_id' => $contactId, 'load_run' => $run, 'dispatched_at' => now()]));
+        dispatch(new SendLoadMessage(DB::table('harness_outbound_messages')->insertGetId(['contact_id' => $contactId, 'load_run' => $run, 'dispatched_at' => now()])));
     }
 }
 
-it('confirms the subscription before delivering anything', function () {
+it('confirms the subscription before delivering anything', function (): void {
     $account = connectHarness();
     sendLoad(3);
 
@@ -97,7 +98,7 @@ it('confirms the subscription before delivering anything', function () {
         ->and(DB::table('sesame_events')->where('type', '<>', 'SubscriptionConfirmation')->where('status', '<>', 'delivered')->count())->toBe(0);
 });
 
-it('closes the loop with every event reconciled, including forced bounces and complaints', function () {
+it('closes the loop with every event reconciled, including forced bounces and complaints', function (): void {
     connectHarness(['duplicate' => 30, 'out_of_order' => 30, 'delay' => 20, 'soft_bounce' => 10]);
     sendLoad(1000); // contact 200, 400, ... force bounces; 500 and 1000 force complaints
 
@@ -119,7 +120,7 @@ it('closes the loop with every event reconciled, including forced bounces and co
         ->and(DB::table('harness_message_events')->count())->toBe(DB::table('sesame_events')->whereNull('duplicate_of')->where('type', '<>', 'SubscriptionConfirmation')->count());
 });
 
-it('catches a CRM that loses events: a webhook answering 403 drops them and reconciliation fails', function () {
+it('catches a CRM that loses events: a webhook answering 403 drops them and reconciliation fails', function (): void {
     connectHarness();
     runDataplane($this); // confirm first
     sendLoad(5);
@@ -134,7 +135,7 @@ it('catches a CRM that loses events: a webhook answering 403 drops them and reco
         ->and(Artisan::call('crm:reconcile'))->toBe(1);
 });
 
-it('retries 5xx with the SNS policy and then drops', function () {
+it('retries 5xx with the SNS policy and then drops', function (): void {
     connectHarness();
     runDataplane($this);
     sendLoad(1);
@@ -150,7 +151,7 @@ it('retries 5xx with the SNS policy and then drops', function () {
         ->and(DB::table('sesame_delivery_attempts')->where('event_id', $send->id)->pluck('http_status')->unique()->all())->toBe([503]);
 });
 
-it('resumes after a restart: WAL records ingest once and pending events are rescheduled', function () {
+it('resumes after a restart: WAL records ingest once and pending events are rescheduled', function (): void {
     connectHarness();
     runDataplane($this); // subscription confirmed
     sendLoad(20);
@@ -171,17 +172,17 @@ it('resumes after a restart: WAL records ingest once and pending events are resc
         ->and(Artisan::call('crm:reconcile'))->toBe(0);
 });
 
-it('never resends accepted work and skips suppressed contacts', function () {
+it('never resends accepted work and skips suppressed contacts', function (): void {
     connectHarness();
     runDataplane($this);
     sendLoad(200); // contact 200 is a forced hard bounce
     runDataplane($this);
     $first = DB::table('harness_outbound_messages')->orderBy('id')->first();
 
-    SendLoadMessage::dispatch($first->id); // queue redelivery
+    dispatch(new SendLoadMessage($first->id)); // queue redelivery
     $bounced = DB::table('harness_contacts')->where('email', 'bounce+200@load.crm.test')->value('id');
     $again = DB::table('harness_outbound_messages')->insertGetId(['contact_id' => $bounced, 'load_run' => 'second', 'dispatched_at' => now()]);
-    SendLoadMessage::dispatch($again);
+    dispatch(new SendLoadMessage($again));
 
     expect(DB::table('sesame_messages')->count())->toBe(200)
         ->and(DB::table('harness_outbound_messages')->where('id', $again)->value('state'))->toBe('skipped_suppressed');

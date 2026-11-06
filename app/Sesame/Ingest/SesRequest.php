@@ -6,19 +6,19 @@ namespace App\Sesame\Ingest;
  * Reads the parts of an SES v2 SendEmail (Content.Raw) request the simulator
  * uses. Only the MIME header block is decoded and parsed, never the body.
  */
-final class SesRequest
+final readonly class SesRequest
 {
     /** @param list<string> $recipients */
     private function __construct(
-        public readonly array $recipients,
-        public readonly ?string $configurationSet,
+        public array $recipients,
+        public ?string $configurationSet,
         /** @var array<string, list<string>> */
-        public readonly array $tags,
-        public readonly ?string $tenantName,
-        public readonly ?string $source,
+        public array $tags,
+        public ?string $tenantName,
+        public ?string $source,
         /** @var list<array{name: string, value: string}> */
-        public readonly array $headers,
-        public readonly int $rawBytes,
+        public array $headers,
+        public int $rawBytes,
     ) {}
 
     /** Access key ID from a SigV4 Authorization header, or null when the header is not SigV4. */
@@ -155,7 +155,7 @@ final class SesRequest
     /** @return list<string> */
     private static function splitAddresses(string $value): array
     {
-        return array_values(array_filter(array_map('trim', str_getcsv($value, ',', '"', '')), fn ($v) => $v !== ''));
+        return array_values(array_filter(array_map(trim(...), str_getcsv($value, ',', '"', '')), fn ($v) => $v !== ''));
     }
 
     /** Extract the bare address from `Name <addr>` forms. */

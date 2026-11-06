@@ -24,12 +24,10 @@ class CrmHarnessServiceProvider extends ServiceProvider
         // Resolve MessageValidator from the container everywhere so the host
         // pattern can be swapped. An empty pattern falls back to amazonaws.com.
         $this->app->singleton(MessageValidator::class, fn (): MessageValidator => new MessageValidator(
-            static function (string $url): string {
-                return self::$certificates[$url] ??= Http::connectTimeout(3)->timeout(5)
-                    ->withOptions(['allow_redirects' => false, 'verify' => config('services.sns.ca_bundle') ?: true])
-                    ->get($url)->throw()->body();
-            },
-            hostNamePattern: config('services.sns.cert_host_pattern') ?? '',
+            static fn (string $url): string => self::$certificates[$url] ??= Http::connectTimeout(3)->timeout(5)
+                ->withOptions(['allow_redirects' => false, 'verify' => config('services.sns.ca_bundle') ?: true])
+                ->get($url)->throw()->body(),
+            hostNamePattern: config('services.sns.cert_host_pattern', ''),
         ));
     }
 

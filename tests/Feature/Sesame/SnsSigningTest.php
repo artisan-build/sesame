@@ -8,7 +8,7 @@ use Aws\Sns\Message;
 use Aws\Sns\MessageValidator;
 use Illuminate\Support\Str;
 
-beforeEach(function () {
+beforeEach(function (): void {
     sesameSetUp();
     $this->account = Accounts::create('signing', null, 'healthy', 100, 1)['account'];
 });
@@ -29,42 +29,42 @@ function envelopeFor(SesameAccount $account, string $type): array
     };
 }
 
-it('signs every SNS message type in a form the real AWS validator accepts', function (string $type) {
+it('signs every SNS message type in a form the real AWS validator accepts', function (string $type): void {
     $signed = Signer::sign(envelopeFor($this->account, $type), $this->account->private_key);
 
     $message = Message::fromJsonString(json_encode($signed));
-    app(MessageValidator::class)->validate($message);
+    resolve(MessageValidator::class)->validate($message);
 
     expect($signed['SignatureVersion'])->toBe('2');
 })->with(['Notification', 'SubscriptionConfirmation', 'UnsubscribeConfirmation']);
 
-it('signs notifications with a Subject too', function () {
+it('signs notifications with a Subject too', function (): void {
     $signed = Signer::sign(envelopeFor($this->account, 'Notification') + ['Subject' => 'Amazon SES Email Event Notification'], $this->account->private_key);
 
-    app(MessageValidator::class)->validate(Message::fromJsonString(json_encode($signed)));
+    resolve(MessageValidator::class)->validate(Message::fromJsonString(json_encode($signed)));
 })->throwsNoExceptions();
 
-it('fails validation when a signed field is altered', function () {
+it('fails validation when a signed field is altered', function (): void {
     $signed = Signer::sign(envelopeFor($this->account, 'Notification'), $this->account->private_key);
     $signed['Message'] = str_replace('Delivery', 'Bounce', $signed['Message']);
 
-    app(MessageValidator::class)->validate(Message::fromJsonString(json_encode($signed)));
+    resolve(MessageValidator::class)->validate(Message::fromJsonString(json_encode($signed)));
 })->throws(InvalidSnsMessageException::class, 'signature is invalid');
 
-it('fails validation when signed by another account', function () {
+it('fails validation when signed by another account', function (): void {
     $other = Accounts::create('other', null, 'healthy', 100, 1)['account'];
     $signed = Signer::sign(envelopeFor($this->account, 'Notification'), $other->private_key);
 
-    app(MessageValidator::class)->validate(Message::fromJsonString(json_encode($signed)));
+    resolve(MessageValidator::class)->validate(Message::fromJsonString(json_encode($signed)));
 })->throws(InvalidSnsMessageException::class);
 
-it('is rejected by a validator still bound to amazonaws.com', function () {
+it('is rejected by a validator still bound to amazonaws.com', function (): void {
     $signed = Signer::sign(envelopeFor($this->account, 'Notification'), $this->account->private_key);
 
     (new MessageValidator(fn () => $this->account->certificate))->validate(Message::fromJsonString(json_encode($signed)));
 })->throws(InvalidSnsMessageException::class, 'invalid domain');
 
-it('serves the account certificate over the .pem URL', function () {
+it('serves the account certificate over the .pem URL', function (): void {
     $path = parse_url($this->account->certificateUrl(), PHP_URL_PATH);
     expect($path)->toEndWith('/cert.pem');
 
