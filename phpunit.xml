@@ -31,6 +31,10 @@
         <env name="DB_URL" value=""/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
+        <!-- Every request drains the ingest buffer after its response. A test
+             sharing the default tmp path with a local Sesame server would drain
+             that server's live sends into the test database and roll them back. -->
+        <env name="SESAME_BUFFER_PATH" value="/tmp/sesame-phpunit/buffer.sqlite"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
