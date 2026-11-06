@@ -17,6 +17,23 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+
+    # The test suite runs on Postgres (phpunit.xml), as Sesame does.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: sesame
+          POSTGRES_PASSWORD: sesame
+          POSTGRES_DB: sesame_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sesame -d sesame_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     strategy:
       matrix:
         php-version: ['8.5']
@@ -32,6 +49,7 @@ jobs:
         with:
           php-version: ${{ matrix.php-version }}
           tools: composer:v2
+          extensions: pdo_pgsql
           coverage: xdebug
 
       - name: Install Dependencies
