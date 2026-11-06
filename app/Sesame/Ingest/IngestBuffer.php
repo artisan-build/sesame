@@ -2,6 +2,7 @@
 
 namespace App\Sesame\Ingest;
 
+use App\Sesame\Delivery\Wakeups;
 use App\Sesame\Sns\SesEvent;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -13,8 +14,10 @@ use Throwable;
  *
  * SendEmail commits an accepted send here, in one local transaction with its
  * share of the per-second send rate, and returns the MessageId. The send then
- * reaches Postgres when this instance drains the buffer: after the response
- * (a deferred callback) and every second from the scheduler.
+ * reaches Postgres when this instance drains the buffer after the response
+ * (see Housekeeping): that request's drain, or whichever comes next on this
+ * instance, takes every row it can. There is no scheduler; an instance that
+ * gets no requests has nothing new to drain.
  *
  * ── THIS IS NOT DURABLE, BY DECISION ────────────────────────────────────────
  *
@@ -27,8 +30,10 @@ use Throwable;
  * MessageId names this buffer and its sequence number, and Postgres records
  * how far each buffer was drained (see lossFor()).
  *
- * A wake from hibernation is a thaw of the same container and keeps the file;
- * a crash of one PHP process does not lose committed rows (WAL journal).
+ * A crash of one PHP process does not lose committed rows (WAL journal). A
+ * wake from hibernation thaws the same container and keeps the file (the
+ * scalpels.app lab), and the buffer is normally empty by then anyway: each
+ * drain runs moments after a request, and hibernation follows minutes of none.
  */
 final class IngestBuffer
 {
@@ -147,58 +152,88 @@ final class IngestBuffer
     }
 
     /**
-     * Move everything in the buffer to Postgres. Only one drain runs per
-     * buffer at a time; a caller that finds one running returns at once.
+     * Move what the buffer holds to Postgres, as much as the budget allows:
+     * every row any request left, not only the caller's own. Runs after the
+     * response (Housekeeping), so it holds a worker, never a client.
+     *
+     * Ownership: one drain per buffer at a time, by an exclusive file lock.
+     * A caller that finds the lock taken returns at once, because the holder
+     * looks again after letting go: a row committed before a failed attempt
+     * to take the lock is seen by the holder's last look, so a send is never
+     * stranded by losing that race.
+     *
+     * Bounded: batches of `sesame.buffer.drain_batch` rows until the buffer is
+     * empty or `sesame.buffer.drain_seconds` pass. Whatever is left waits for
+     * the next request's drain.
      *
      * Exactly once across crashes: rows are copied with ON CONFLICT DO
-     * NOTHING on their stable IDs and deleted from SQLite only after the
-     * Postgres commit, so a drain interrupted between the two repeats
+     * NOTHING on their stable IDs, their wakeups are queued, and only then are
+     * they deleted from SQLite, so a drain interrupted anywhere repeats
      * harmlessly.
-     *
-     * The scheduled drain passes $heartbeat so Postgres sees the buffer is
-     * alive even while it is empty; see lossFor().
      *
      * @return int sends moved
      */
-    public static function drain(bool $heartbeat = false, int $batch = 500, float $maxSeconds = 10): int
+    public static function drain(?int $batch = null, ?float $maxSeconds = null): int
     {
         $pdo = self::pdo();
-        $lock = fopen(self::path().'.drain.lock', 'c');
-        if ($lock === false || ! flock($lock, LOCK_EX | LOCK_NB)) {
-            return 0;
-        }
-        try {
-            $moved = 0;
-            $deadline = microtime(true) + $maxSeconds;
-            do {
-                $sends = $pdo->query('SELECT seq, body FROM sends ORDER BY seq LIMIT '.$batch)->fetchAll(PDO::FETCH_ASSOC);
-                $refusals = $pdo->query('SELECT id, account_id, run_id, kind, at_ms FROM refusals ORDER BY at_ms LIMIT '.$batch)->fetchAll(PDO::FETCH_ASSOC);
-                if ($sends === [] && $refusals === []) {
-                    break;
-                }
-                self::copy($sends, $refusals);
-                if ($sends !== []) {
-                    $pdo->prepare('DELETE FROM sends WHERE seq <= ?')->execute([(int) end($sends)['seq']]);
-                }
-                if ($refusals !== []) {
-                    $pdo->prepare('DELETE FROM refusals WHERE id IN ('.implode(',', array_fill(0, count($refusals), '?')).')')
-                        ->execute(array_column($refusals, 'id'));
-                }
-                $moved += count($sends);
-            } while (microtime(true) < $deadline);
-            if ($heartbeat && $moved === 0) {
-                self::register();
+        $batch = max(1, $batch ?? (int) config('sesame.buffer.drain_batch'));
+        $deadline = microtime(true) + ($maxSeconds ?? (float) config('sesame.buffer.drain_seconds'));
+        $moved = 0;
+        do {
+            $lock = fopen(self::path().'.drain.lock', 'c');
+            if ($lock === false || ! flock($lock, LOCK_EX | LOCK_NB)) {
+                return $moved;
             }
-            $pdo->prepare('DELETE FROM rate WHERE second < ?')->execute([time() - 5]);
+            try {
+                do {
+                    $sends = $pdo->query('SELECT seq, body FROM sends ORDER BY seq LIMIT '.$batch)->fetchAll(PDO::FETCH_ASSOC);
+                    $refusals = $pdo->query('SELECT id, account_id, run_id, kind, at_ms FROM refusals ORDER BY at_ms LIMIT '.$batch)->fetchAll(PDO::FETCH_ASSOC);
+                    if ($sends === [] && $refusals === []) {
+                        break;
+                    }
+                    Wakeups::at(self::copy($sends, $refusals));
+                    if ($sends !== []) {
+                        $pdo->prepare('DELETE FROM sends WHERE seq <= ?')->execute([(int) end($sends)['seq']]);
+                    }
+                    if ($refusals !== []) {
+                        $pdo->prepare('DELETE FROM refusals WHERE id IN ('.implode(',', array_fill(0, count($refusals), '?')).')')
+                            ->execute(array_column($refusals, 'id'));
+                    }
+                    $moved += count($sends);
+                } while (microtime(true) < $deadline);
+                $pdo->prepare('DELETE FROM rate WHERE second < ?')->execute([time() - 5]);
+            } finally {
+                flock($lock, LOCK_UN);
+                fclose($lock);
+            }
+        } while (microtime(true) < $deadline && self::depth() > 0);
 
-            return $moved;
-        } finally {
-            flock($lock, LOCK_UN);
-            fclose($lock);
-        }
+        return $moved;
     }
 
-    /** How long a buffer may go unseen before it counts as gone. */
+    /**
+     * Claim this instance's turn at the periodic housekeeping (heartbeat,
+     * overdue repair, pruning): true at most once per $seconds per buffer,
+     * whichever of its workers asks first.
+     */
+    public static function claimHousekeeping(int $seconds): bool
+    {
+        $pdo = self::pdo();
+        $now = time();
+        $pdo->exec("INSERT OR IGNORE INTO meta (k, v) VALUES ('housekeeping_at', '0')");
+        $claim = $pdo->prepare("UPDATE meta SET v = ? WHERE k = 'housekeeping_at' AND CAST(v AS INTEGER) <= ?");
+        $claim->execute([(string) $now, $now - $seconds]);
+
+        return $claim->rowCount() === 1;
+    }
+
+    /**
+     * How long a buffer may go unseen before it counts as gone. A live buffer
+     * is seen at every drain and, while its instance gets requests, at least
+     * every housekeeping interval. With no scheduler, an idle instance is not
+     * seen at all; a row it failed to drain counts as lost until a request
+     * reaches that instance and drains it.
+     */
     public const int GONE_AFTER_SECONDS = 30;
 
     /**
@@ -228,8 +263,8 @@ final class IngestBuffer
         ];
     }
 
-    /** Tell Postgres this buffer exists, so its losses are identifiable even if it never drains a send. */
-    private static function register(): void
+    /** Tell Postgres this buffer exists and is alive, so its losses are identifiable even if it never drains a send. */
+    public static function register(): void
     {
         DB::statement(
             'INSERT INTO sesame_buffers (id, host, opened_at, last_seen_at) VALUES (?, ?, now(), now())
@@ -241,12 +276,13 @@ final class IngestBuffer
     /**
      * @param  list<array{seq: int|string, body: string}>  $sends
      * @param  list<array<string, mixed>>  $refusals
+     * @return list<int> the events' due times, epoch milliseconds
      */
-    private static function copy(array $sends, array $refusals): void
+    private static function copy(array $sends, array $refusals): array
     {
         $bufferId = self::id();
         $region = (string) config('sesame.region');
-        $messages = $events = [];
+        $messages = $events = $due = [];
         foreach ($sends as $row) {
             $send = json_decode($row['body'], true, 64, JSON_THROW_ON_ERROR);
             $send['id'] = self::messageId($bufferId, (int) $send['t'], (int) $row['seq']);
@@ -258,6 +294,7 @@ final class IngestBuffer
                 'common_headers' => json_encode($send['ch']), 'raw_bytes' => $send['sz'], 'outcomes' => json_encode($send['o']),
             ];
             foreach ($send['ev'] as $event) {
+                $due[] = (int) $event['due'];
                 $events[] = [
                     'id' => $event['id'], 'sns_message_id' => $event['sns'], 'account_id' => $send['a'], 'run_id' => $send['r'],
                     'message_id' => $send['id'], 'type' => $event['type'], 'recipient' => $event['rcpt'], 'duplicate_of' => $event['dup'] ?? null,
@@ -289,6 +326,8 @@ final class IngestBuffer
                 [$bufferId, (string) gethostname(), $through, count($sends)],
             );
         });
+
+        return $due;
     }
 
     private static function pdo(): PDO
@@ -318,7 +357,7 @@ final class IngestBuffer
         self::$connections[$path] = $pdo;
         if ($created->rowCount() === 1) {
             // A new file: register it now rather than at its first drain. If
-            // this process dies first, the next scheduled drain registers it.
+            // this process dies first, the next request's housekeeping does.
             self::register();
         }
 

@@ -16,6 +16,9 @@ return RectorConfig::configure()
         __DIR__.'/routes',
         __DIR__.'/tests',
     ])
+    // Octane copies this stub in at server start; it runs before the
+    // autoloader, so Rector's Env::get() rewrite breaks every worker.
+    ->withSkip([__DIR__.'/public/frankenphp-worker.php'])
     ->withPhpSets(php83: true)
     ->withSets([
         LaravelLevelSetList::UP_TO_LARAVEL_120,

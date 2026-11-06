@@ -4,6 +4,7 @@ namespace App\Sesame;
 
 use App\Models\SesameAccount;
 use App\Models\SesameRun;
+use App\Sesame\Delivery\Wakeups;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
@@ -102,6 +103,7 @@ final class Accounts
             'type' => 'SubscriptionConfirmation', 'due_at' => $now, 'status' => 'pending', 'attempts' => 0, 'created_at' => $now,
             'payload' => json_encode(['Token' => $account->subscription_token, 'TopicArn' => $account->topic_arn]),
         ]);
+        Wakeups::at([$now->getTimestampMs()]);
     }
 
     public static function confirm(SesameAccount $account, string $token, string $topicArn): bool
@@ -111,6 +113,8 @@ final class Accounts
         }
         if ($account->subscription_status !== 'confirmed') {
             $account->forceFill(['subscription_status' => 'confirmed', 'subscription_confirmed_at' => now()])->save();
+            // Events held until now are due already: wake a sweep for them.
+            Wakeups::at([now()->getTimestampMs()]);
         }
 
         return true;

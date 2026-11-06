@@ -61,9 +61,9 @@ final class DeliverEvents implements ShouldQueue
     {
         $retries = (int) config('sesame.delivery.retry.retries');
         $delayMs = (int) round((float) config('sesame.delivery.retry.delay_seconds') * 1000);
-        $attempts = [];
+        $attempts = $retryAt = [];
 
-        DB::transaction(function () use ($events, $results, $retries, $delayMs, &$attempts): void {
+        DB::transaction(function () use ($events, $results, $retries, $delayMs, &$attempts, &$retryAt): void {
             foreach ($results as $result) {
                 $event = $events[$result['key']] ?? null;
                 if ($event === null) {
@@ -80,7 +80,8 @@ final class DeliverEvents implements ShouldQueue
                     $update += ['status' => 'delivered', 'delivered_at' => SesEvent::iso((int) ($result['started_ms'] + $result['duration_ms'])), 'latency_ms' => round($result['duration_ms'], 3)];
                 } elseif (($status === null || $status >= 500 || $status === 429) && $attempt <= $retries) {
                     // SNS retries only 5xx, 429 and transport failures.
-                    $update += ['status' => 'pending', 'due_at' => SesEvent::iso(self::nowMs() + $delayMs)];
+                    $retryAt[] = $due = self::nowMs() + $delayMs;
+                    $update += ['status' => 'pending', 'due_at' => SesEvent::iso($due)];
                 } else {
                     // Any other response, or retries exhausted: the event is gone, and Sesame reports it.
                     $update += ['status' => 'dropped'];
@@ -98,6 +99,9 @@ final class DeliverEvents implements ShouldQueue
                 DB::table('sesame_delivery_attempts')->insert($chunk);
             }
         });
+
+        // After the commit, so the wakeup's sweep sees the retries.
+        Wakeups::at($retryAt);
     }
 
     private static function nowMs(): int

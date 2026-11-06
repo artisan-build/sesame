@@ -27,14 +27,24 @@ return [
         // send, so nothing here is meant to outlive the instance. Sends not
         // yet drained when the instance goes are lost; see IngestBuffer.
         'path' => env('SESAME_BUFFER_PATH', sys_get_temp_dir().'/sesame/buffer.sqlite'),
+        // The after-response drain takes every row it can, in batches of
+        // this many, until the buffer is empty or this many seconds pass.
+        // Kept well under the worker's request limits; what is left waits
+        // for the next request's drain.
+        'drain_batch' => 500,
+        'drain_seconds' => 5.0,
     ],
+
+    // How often, per instance and at most, a request's after-response work
+    // also heartbeats the buffer and sweeps overdue events. 0 turns it off.
+    'housekeeping_seconds' => (int) env('SESAME_HOUSEKEEPING_SECONDS', 10),
 
     // How long an instance may reuse an account row before reading it again.
     // Control-plane changes reach every replica within this window.
     'account_cache_ms' => (int) env('SESAME_ACCOUNT_CACHE_MS', 1000),
 
     'delivery' => [
-        // The scheduler sweeps due events every second and leases them to
+        // Delayed SweepDue jobs wake when events fall due and lease them to
         // queued DeliverEvents jobs in batches of this size.
         'batch' => 25,
         // Upper bound on events one sweep hands out.
@@ -48,6 +58,9 @@ return [
         'timeout_seconds' => 15,
         // SNS default HTTP delivery policy: 3 retries, 20 s apart, linear.
         'retry' => ['retries' => 3, 'delay_seconds' => 20],
+        // The queue's longest delay (SQS: 15 minutes). A wakeup due later
+        // re-queues itself until its time.
+        'max_delay_seconds' => (int) env('SESAME_MAX_DELAY_SECONDS', 900),
     ],
 
     'retention_days' => 7,
