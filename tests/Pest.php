@@ -4,6 +4,7 @@ use App\CrmHarness\CrmHarnessServiceProvider;
 use App\Models\SesameAccount;
 use App\Sesame\Delivery\DeliveryPool;
 use App\Sesame\Delivery\Sweeper;
+use App\Sesame\Delivery\Wakeups;
 use App\Sesame\Ingest\AccountDirectory;
 use App\Sesame\Ingest\IngestBuffer;
 use Aws\SesV2\SesV2Client;
@@ -76,8 +77,12 @@ function sesameSetUp(): string
         'sesame.public_url' => 'https://sesame.test',
         'sesame.buffer.path' => $dir.'/buffer.sqlite',
         'services.sns.cert_host_pattern' => '/^sesame\.test$/',
+        // Tests drive sweeps themselves (runDelivery); a request's periodic
+        // repair sweep would deliver mid-request through the real HTTP pool.
+        'sesame.housekeeping_seconds' => 0,
     ]);
     IngestBuffer::reset();
+    Wakeups::reset();
     AccountDirectory::forget();
     CrmHarnessServiceProvider::flushCertificates();
     // The real AWS validator; only certificate fetching is routed in-process.

@@ -7,12 +7,14 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
- * Hands due events to delivery jobs. The scheduler runs it every second.
+ * Hands due events to delivery jobs. SweepDue wakeups run it when events fall
+ * due, and Housekeeping runs it to repair anything overdue.
  *
  * A sweep leases each due event to one batch token for `lease_seconds`.
  * Only the job holding that token may settle the event, so a job that is
  * lost, crashes or runs twice cannot settle it twice; when a lease runs
- * out the event is due again and the next sweep hands it to a new job.
+ * out the event is due again and the wakeup scheduled for that moment
+ * hands it to a new job.
  * Claims use FOR UPDATE SKIP LOCKED, so overlapping sweeps on several
  * replicas take disjoint events. Nothing is held in memory between sweeps.
  *
@@ -59,6 +61,12 @@ final class Sweeper
             if (count($ids) < $batch) {
                 break;
             }
+        }
+
+        if ($claimed > 0) {
+            // If a job is lost, its events are due again when the lease runs
+            // out: wake a sweep then, so no scheduler has to notice.
+            Wakeups::at([$nowMs + $leaseMs]);
         }
 
         return $claimed;

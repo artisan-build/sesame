@@ -14,17 +14,18 @@ specification is [`docs/source/`](docs/source/).
 
 ## Read this before a test run: deploying during a run can lose sends
 
-Sesame runs on Laravel Cloud's managed resources only: the web app, Postgres, the scheduler and
-a managed queue. It has no persistent disk, so it acknowledges each `SendEmail` from a SQLite
-buffer in the instance's temporary directory and moves the send into Postgres right after the
-response, and again every second from the scheduler.
+Sesame runs on Laravel Cloud's managed resources only: the web app, Postgres and a managed queue.
+It has no scheduler, so the environment can hibernate between test runs. It has no persistent
+disk, so it acknowledges each `SendEmail` from a SQLite buffer in the instance's temporary
+directory and moves the send into Postgres right after the response. Each after-response drain
+takes every buffered row it can claim, not just its own request's.
 
 **A send Sesame has acknowledged but not yet moved to Postgres is lost if the instance goes
 away.** That happens on every deploy, and on any unexpected instance or process loss. In tests
 the window was a few milliseconds: killing the server and wiping its buffer mid-run lost 0 to 3
 sends per kill at 300/s and none at 30/s. If the after-response drain cannot run (for example,
-Postgres is unreachable), the window grows to whatever the buffer holds until the next scheduled
-drain succeeds.
+Postgres is unreachable), the window grows to whatever the buffer holds until a later request's
+drain succeeds. With no scheduler, nothing drains an instance that stops getting requests.
 
 **A deploy also briefly takes down the certificate URL.** Notifications are signed with a
 certificate served from Sesame itself (`/sns/{account}/cert.pem`). A webhook that has to fetch it
@@ -36,8 +37,8 @@ during a run produces misleading findings as well as lost sends.
 So:
 
 - **Do not deploy Sesame while a test is running.** Turn off push-to-deploy on its Cloud
-  environment, so that a push to the repository does not redeploy it mid-run. Scalpels does not do
-  this for you yet.
+  environment, so that a push to the repository does not redeploy it mid-run. A Scalpels install
+  turns it off for you once manifest v7 is live; until then, turn it off by hand.
 - **Losses are reported, not hidden.** Every MessageId names its buffer and position, and Postgres
   records how far each buffer was drained. `POST /sesame/v1/runs/{run}/missing` classifies a
   MessageId the client holds but the truth API lacks as `lost` (a simulator loss), `undrained`
@@ -101,10 +102,8 @@ SESAME_CA_BUNDLE=$HOME/.local/share/caddy/pki/authorities/local/root.crt
 ```bash
 # Sesame: ingest and SNS endpoints
 php artisan octane:frankenphp --host=sesame.localhost --port=8443 --https --admin-port=2020
-# Sesame: buffer drain and delivery sweep, every second (Cloud's scheduler does this)
-php artisan schedule:work
-# Sesame: delivery jobs (Cloud's managed queue does this)
-php artisan queue:work --queue=default --sleep=0.1 --tries=1
+# Sesame: wakeup and delivery jobs (Cloud's managed queue does this). No scheduler.
+php artisan queue:work --queue=default --sleep=0.1 --tries=3
 # Local CRM harness: webhook, send workers, event workers
 OCTANE_STATE_FILE=storage/logs/octane-harness-state.json \
   php artisan octane:frankenphp --host=127.0.0.1 --port=8001 --admin-port=2021
@@ -128,7 +127,7 @@ php artisan crm:reconcile --run=plateau --wait=1800 --json=report.json
 | `sesame:account:create` | Create a simulated account. Prints its access key ID, a secret, and a truth token, once. |
 | `sesame:run:start` | Start a new run on an account. `--seed` replays an earlier run's draws. |
 | `sesame:run:report` | Simulator-side summary of a run. `--save` stores it on the run row, which outlives raw data. |
-| `sesame:prune` | Delete raw data older than 7 days. Scheduled daily. |
+| `sesame:prune` | Delete raw data older than 7 days. Runs at most daily after a request; no scheduler. |
 | `crm:harness:connect`, `crm:load`, `crm:reconcile` | Local CRM harness only. |
 
 ## HTTP surface

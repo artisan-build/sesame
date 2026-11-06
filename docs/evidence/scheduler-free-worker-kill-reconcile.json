@@ -1,0 +1,206 @@
+{
+    "drained": true,
+    "simulator": {
+        "run": {
+            "id": "01a1b17c-deff-70c0-a8b9-88d785ba91b9",
+            "seed": 20261112,
+            "preset": "healthy",
+            "label": null,
+            "started_at": "2026-11-06T15:31:53+00:00"
+        },
+        "sends": {
+            "accepted": 2699,
+            "first_at": "2026-11-06 15:31:54.349+00",
+            "last_at": "2026-11-06 15:33:24.257+00",
+            "throttled": 0,
+            "rejected": 1,
+            "per_second": [
+                21,
+                30,
+                31,
+                31,
+                29,
+                31,
+                30,
+                30,
+                29,
+                30,
+                31,
+                30,
+                29,
+                29,
+                31,
+                29,
+                31,
+                31,
+                30,
+                29,
+                29,
+                31,
+                30,
+                31,
+                29,
+                30,
+                30,
+                31,
+                30,
+                28,
+                30,
+                30,
+                31,
+                29,
+                31,
+                30,
+                30,
+                30,
+                29,
+                29,
+                32,
+                30,
+                30,
+                28,
+                32,
+                29,
+                30,
+                31,
+                29,
+                30,
+                31,
+                28,
+                31,
+                31,
+                29,
+                31,
+                29,
+                30,
+                29,
+                32,
+                29,
+                31,
+                29,
+                30,
+                31,
+                30,
+                30,
+                30,
+                30,
+                29,
+                31,
+                23,
+                37,
+                30,
+                29,
+                30,
+                30,
+                30,
+                31,
+                30,
+                29,
+                31,
+                29,
+                31,
+                29,
+                30,
+                31,
+                28,
+                32,
+                30,
+                7
+            ]
+        },
+        "outcomes": {
+            "delivered": 2622,
+            "soft_bounce": 31,
+            "delay": 6,
+            "hard_bounce": 35,
+            "complaint": 5
+        },
+        "events": {
+            "by_status": {
+                "pending": 0,
+                "delivered": 5414,
+                "dropped": 0
+            },
+            "by_type": [
+                {
+                    "type": "DeliveryDelay",
+                    "status": "delivered",
+                    "count": 6
+                },
+                {
+                    "type": "Send",
+                    "status": "delivered",
+                    "count": 2699
+                },
+                {
+                    "type": "Delivery",
+                    "status": "delivered",
+                    "count": 2637
+                },
+                {
+                    "type": "Complaint",
+                    "status": "delivered",
+                    "count": 5
+                },
+                {
+                    "type": "Bounce",
+                    "status": "delivered",
+                    "count": 67
+                }
+            ]
+        },
+        "webhook": {
+            "attempts": 5414,
+            "ok": 5414,
+            "retryable_failures": 0,
+            "permanent_failures": 0,
+            "latency_ms": {
+                "p50": 138.22,
+                "p95": 298.82,
+                "p99": 359.87,
+                "max": 509.73
+            }
+        }
+    },
+    "crm": {
+        "sends": {
+            "intended": 2700,
+            "accepted": 2699,
+            "failed": 1,
+            "still_queued": 0,
+            "skipped_suppressed": 0,
+            "throttled_retries": 0,
+            "first_accept": "2026-11-06 15:31:54.354+00",
+            "last_accept": "2026-11-06 15:33:24.261+00",
+            "accepted_per_second_on_plateau": {
+                "mean": 29.99,
+                "min": 22,
+                "max": 38,
+                "seconds": 81
+            },
+            "send_latency_ms": {
+                "p50": 49,
+                "p95": 115
+            },
+            "max_queue_lag_seconds": 0.25
+        },
+        "events": {
+            "recorded": 5409,
+            "event_lag_ms": {
+                "p50": 879,
+                "p95": 2201
+            }
+        },
+        "suppressed_contacts": 41
+    },
+    "reconciliation": {
+        "messages_compared": 2699,
+        "mismatches": 0,
+        "examples": []
+    },
+    "simulator_losses": {
+        "lost_in_ingest_buffer": 0,
+        "undrained": 0,
+        "examples": []
+    }
+}
