@@ -14,6 +14,7 @@ use GuzzleHttp\Psr7\Response;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Defer\DeferredCallbackCollection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Sleep;
 use Psr\Http\Message\RequestInterface;
 use Tests\TestCase;
 
@@ -155,10 +156,10 @@ function runDelivery(TestCase $test, float $seconds = 15): void
     $deadline = microtime(true) + $seconds;
     while (microtime(true) < $deadline) {
         IngestBuffer::drain();
-        app(Sweeper::class)->sweep();
+        resolve(Sweeper::class)->sweep();
         if (IngestBuffer::depth() === 0 && DB::table('sesame_events')->where('status', 'pending')->doesntExist()) {
             return;
         }
-        usleep(10000);
+        Sleep::usleep(10000);
     }
 }

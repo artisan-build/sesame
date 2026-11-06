@@ -199,7 +199,7 @@ final class IngestBuffer
     }
 
     /** How long a buffer may go unseen before it counts as gone. */
-    public const GONE_AFTER_SECONDS = 30;
+    public const int GONE_AFTER_SECONDS = 30;
 
     /**
      * Classify a MessageId that Sesame returned but Postgres does not hold.

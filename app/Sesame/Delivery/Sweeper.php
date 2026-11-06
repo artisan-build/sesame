@@ -54,7 +54,7 @@ final class Sweeper
             if ($ids === []) {
                 break;
             }
-            DeliverEvents::dispatch($token, $ids);
+            dispatch(new DeliverEvents($token, $ids));
             $claimed += count($ids);
             if (count($ids) < $batch) {
                 break;

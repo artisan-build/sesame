@@ -5,8 +5,9 @@ use App\Sesame\Ingest\AccountDirectory;
 use App\Sesame\Ingest\IngestBuffer;
 use Aws\SesV2\Exception\SesV2Exception;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Sleep;
 
-beforeEach(function () {
+beforeEach(function (): void {
     sesameSetUp();
     $created = Accounts::create('ingest', null, 'healthy', 1000, 99);
     AccountDirectory::forget();
@@ -19,7 +20,7 @@ function rawMime(string $to, string $extraHeaders = ''): string
     return "From: Growth <growth@load.crm.test>\r\nTo: {$to}\r\nSubject: Hi\r\n there\r\nMessage-ID: <m1@load.crm.test>\r\nDate: Fri, 06 Nov 2026 08:00:00 +0000\r\n{$extraHeaders}MIME-Version: 1.0\r\n\r\nBody that is never parsed\r\nFrom: not-a-header@x.test\r\n";
 }
 
-it('accepts a Laravel-shaped SendEmail through the real SDK and returns an SES-shaped MessageId', function () {
+it('accepts a Laravel-shaped SendEmail through the real SDK and returns an SES-shaped MessageId', function (): void {
     holdDrains($this);
     $result = sesClient($this, $this->akid)->sendEmail([
         'Source' => 'growth@load.crm.test', // Laravel's v1-style key, tolerated
@@ -44,7 +45,7 @@ it('accepts a Laravel-shaped SendEmail through the real SDK and returns an SES-s
         ->and(array_column($record['ev'], 'type'))->toBe(['Send', 'Delivery']);
 });
 
-it('drains an accepted send to Postgres after the response, under the MessageId the client got', function () {
+it('drains an accepted send to Postgres after the response, under the MessageId the client got', function (): void {
     $result = sesClient($this, $this->akid)->sendEmail([
         'Destination' => ['ToAddresses' => ['success@load.crm.test']],
         'Content' => ['Raw' => ['Data' => rawMime('success@load.crm.test')]],
@@ -56,7 +57,7 @@ it('drains an accepted send to Postgres after the response, under the MessageId 
         ->and((int) DB::table('sesame_buffers')->where('id', IngestBuffer::id())->value('drained_through_seq'))->toBe(1);
 });
 
-it('makes no Postgres round trip on the ingest path once the account is cached', function () {
+it('makes no Postgres round trip on the ingest path once the account is cached', function (): void {
     holdDrains($this);
     $client = sesClient($this, $this->akid);
     $send = fn (int $i) => $client->sendEmail([
@@ -72,7 +73,7 @@ it('makes no Postgres round trip on the ingest path once the account is cached',
     expect(DB::getQueryLog())->toBe([]);
 });
 
-it('drains idempotently when a drain dies between the Postgres commit and the buffer delete', function () {
+it('drains idempotently when a drain dies between the Postgres commit and the buffer delete', function (): void {
     holdDrains($this);
     $client = sesClient($this, $this->akid);
     foreach ([1, 2, 3] as $i) {
@@ -93,7 +94,7 @@ it('drains idempotently when a drain dies between the Postgres commit and the bu
         ->and(IngestBuffer::depth())->toBe(0);
 });
 
-it('returns SES errors the SDK maps to their exception codes', function (callable $request, string $code, int $status) {
+it('returns SES errors the SDK maps to their exception codes', function (callable $request, string $code, int $status): void {
     try {
         $request($this);
         $this->fail('expected an SES error');
@@ -106,7 +107,7 @@ it('returns SES errors the SDK maps to their exception codes', function (callabl
     'missing recipient' => [fn ($t) => sesClient($t, $t->akid)->sendEmail(['Destination' => ['ToAddresses' => []], 'Content' => ['Raw' => ['Data' => "Subject: x\r\n\r\nbody"]]]), 'BadRequestException', 400],
 ]);
 
-it('throttles above the account max send rate and logs the refusal', function () {
+it('throttles above the account max send rate and logs the refusal', function (): void {
     holdDrains($this);
     $this->account->forceFill(['max_send_rate' => 2])->save();
     AccountDirectory::forget();
@@ -114,7 +115,7 @@ it('throttles above the account max send rate and logs the refusal', function ()
     $codes = [];
     // Stay inside one wall-clock second so the window is a single bucket.
     while (microtime(true) - floor(microtime(true)) > 0.7) {
-        usleep(10000);
+        Sleep::usleep(10000);
     }
     for ($i = 0; $i < 4; $i++) {
         try {
@@ -132,7 +133,7 @@ it('throttles above the account max send rate and logs the refusal', function ()
     expect(DB::table('sesame_send_refusals')->where('kind', 'throttled')->count())->toBe(2);
 });
 
-it('rejects at send time when the lottery draws Reject', function () {
+it('rejects at send time when the lottery draws Reject', function (): void {
     holdDrains($this);
     $this->account->forceFill(['rate_overrides' => ['reject' => 100]])->save();
     AccountDirectory::forget();

@@ -16,7 +16,7 @@ Schedule::command('sesame:prune')->daily()->onOneServer();
 // alive for the minute to fire this every second. onOneServer() uses the
 // cache store Cloud points the scheduler at, so replicas do not double-sweep;
 // even if two did, SKIP LOCKED leases keep their claims disjoint.
-Schedule::call(fn () => app(Sweeper::class)->sweep())->name('sesame:sweep')->everySecond()->onOneServer()->withoutOverlapping(1);
+Schedule::call(fn () => resolve(Sweeper::class)->sweep())->name('sesame:sweep')->everySecond()->onOneServer()->withoutOverlapping(1);
 
 // Every replica drains its OWN ingest buffer, so no onOneServer() here. This
 // catches what the after-response drain did not, such as the last sends

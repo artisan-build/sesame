@@ -36,7 +36,7 @@ final class RunController
     public function missing(Request $request, string $run): JsonResponse
     {
         $this->authorize($request, $run);
-        $ids = array_slice(array_values(array_filter((array) $request->json('message_ids', []), 'is_string')), 0, 5000);
+        $ids = array_slice(array_values(array_filter((array) $request->json('message_ids', []), is_string(...))), 0, 5000);
         $known = DB::table('sesame_messages')->whereIn('message_id', $ids)->pluck('message_id')->flip();
         $out = [];
         foreach ($ids as $id) {
