@@ -81,7 +81,7 @@ return [
         'crm-ses' => [
             'transport' => 'ses-v2',
             'retries' => 0,
-            'http' => ['connect_timeout' => 3, 'timeout' => 10],
+            'http' => ['connect_timeout' => 3, 'timeout' => 10, 'verify' => env('SESAME_CA_BUNDLE') ?: true],
             'options' => ['ConfigurationSetName' => 'crm-load'],
         ],
 

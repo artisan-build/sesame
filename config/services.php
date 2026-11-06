@@ -33,8 +33,8 @@ return [
 
     'sns' => [
         'cert_host_pattern' => env('SNS_CERT_HOST_PATTERN'), // staging: /^<sim-host>$/
-        // Local orb only: the CA that signed the local TLS proxy's certificate.
-        'ca_bundle' => env('SNS_CERT_CA_BUNDLE'),
+        // Local only: CA that signed a self-hosted Sesame's TLS certificate (Caddy's internal CA in the orb).
+        'ca_bundle' => env('SESAME_CA_BUNDLE'),
     ],
 
     'slack' => [

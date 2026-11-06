@@ -1,12 +1,19 @@
-# {{FILL: project name}}
+# Sesame
 
-> **Scaffolded from the `artisan-build/laravel-nodeless` starter kit.** This file arrived as a
-> generic stub. Everything from "No frontend build step" down is true of every nodeless app and
-> should stay as-is. Replace each `{{FILL: ...}}` marker, then delete this blockquote.
+Sesame is a simulated Amazon SES for staging load runs, built as a standalone Scalpels app. It
+accepts SES v2 `SendEmail` (`Content.Raw`) requests, draws a deterministic outcome per recipient,
+and posts SNS notifications, signed in the real format, back to the consumer's webhook. It keeps
+the ground truth so the consumer can reconcile every event. Growth CRM is the first consumer.
+The source specification is `docs/source/3183e720-Sesame-SES-Simulator-Spec-for-CRM-Staging.md`;
+`docs/poc-report.md` records what this proof of concept demonstrated and what remains.
 
-{{FILL: one or two paragraphs — what this app is, who it is for, and what it deliberately is NOT.
-Be specific and be blunt about non-goals ("do not add auth/billing/multi-tenancy", "keep it small").
-This is the first thing an agent reads, and it is the cheapest place to prevent scope creep.}}
+Non-goals: real delivery, rendering, inbox placement and deliverability. Never point it at real
+recipients or real SES. Production apps must refuse to boot with simulator config.
+
+`app/Sesame` is the simulator. `app/CrmHarness` is a LOCAL CRM-COMPATIBLE HARNESS that stands in for
+Growth so the loop can close in one checkout; it is not part of Sesame's contract and must not grow
+into a CRM. The data-plane runtime (Octane versus Rust) is not settled: see the benchmark section of
+`docs/poc-report.md` before changing it.
 
 ## Workflow
 

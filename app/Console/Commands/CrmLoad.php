@@ -32,7 +32,8 @@ class CrmLoad extends Command
         $total = $rate * max(1, (int) $this->option('duration'));
         $run = (string) ($this->option('run') ?: 'load-'.now()->format('YmdHis'));
 
-        LoadContacts::seed($total);
+        // Suppressed contacts are never sent to again, so seed enough to cover them.
+        LoadContacts::seed($total + DB::table('harness_contacts')->whereNotNull('suppressed_at')->count());
         $contacts = DB::table('harness_contacts')->whereNull('suppressed_at')->orderBy('id')->limit($total)->pluck('id')->all();
         if (count($contacts) < $total) {
             $this->error('Not enough unsuppressed load contacts.');
