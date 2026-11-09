@@ -40,8 +40,11 @@ function sendSome(object $test, int $count, array $timing = []): void
     }
 }
 
-it('schedules nothing, so the environment can hibernate', function (): void {
-    expect(resolve(Schedule::class)->events())->toBe([]);
+it('needs no simulator scheduler, so the environment can hibernate', function (): void {
+    // The shared auth package registers optional credential maintenance, not a
+    // simulator wakeup. Cloud must still leave the scheduler disabled.
+    expect(collect(resolve(Schedule::class)->events())->pluck('description')->all())
+        ->toBe(['bfc-credential-authorizations-prune']);
 });
 
 it('drains every buffered send it can claim after any request, in bounded batches', function (): void {
