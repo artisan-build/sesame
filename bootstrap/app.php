@@ -13,6 +13,7 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
         then: function (): void {
             Route::group([], base_path('routes/sesame.php'));
+            Route::group([], base_path('routes/mcp.php'));
         },
     )
     ->withCommands([

@@ -6,7 +6,9 @@ format back to your webhook, where `aws/aws-php-sns-message-validator` accepts t
 bound to Sesame's certificate host. Sesame keeps the ground truth, so after a run you can check
 that every event reached your application and changed the right state.
 
-It is a standalone Scalpels app. Growth CRM is its first consumer.
+It is a first-party Scalpels app using Built for Cloud for identity, ownership and delegated MCP
+access. Growth CRM is its first consumer. Existing installations must follow the
+[first-party upgrade runbook](docs/first-party-upgrade.md); a catalog relabel alone is not enough.
 
 **Status: proof of concept.** Read [`docs/poc-report.md`](docs/poc-report.md) for what was
 demonstrated, the runtime benchmark, the limitations and the remaining work. The source
@@ -134,6 +136,8 @@ php artisan crm:reconcile --run=plateau --wait=1800 --json=report.json
 
 | Route | Purpose |
 | --- | --- |
+| `GET /bfc/meta` | Package metadata, ownership state and verified MCP capabilities. |
+| `POST /mcp` | Authenticated read-only accounts, presets, runs, summaries and truth; accepts package MCP credentials or verified Scalpels delegation. |
 | `POST /v2/email/outbound-emails` | SES v2 `SendEmail` with `Content.Raw`. The SigV4 access key ID selects the account; signatures are not verified. |
 | `GET /sns/{account}/cert.pem` | The account's signing certificate. |
 | `GET /sns/{account}/?Action=ConfirmSubscription&...` | The `SubscribeURL`. |

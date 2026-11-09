@@ -1,11 +1,3 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-
-Route::view('/', 'welcome')->name('home');
-
-Route::middleware(['auth', 'verified'])->group(function (): void {
-    Route::view('dashboard', 'dashboard')->name('dashboard');
-});
-
-require __DIR__.'/settings.php';
+// Built for Cloud owns the landing page, dashboard, sign-in and settings.

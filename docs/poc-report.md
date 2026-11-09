@@ -448,24 +448,28 @@ Against the brief, in order of how much it matters next:
    suppressed addresses" metric), reputation-driven `SendingPausedException`, injected `SendEmail`
    latency, custom retry policies and `throttlePolicy.maxReceivesPerSecond`,
    `UnsubscribeConfirmation`.
-7. **Phase 4 / control plane**: `built-for-cloud` users, dashboard and MCP are not installed. The
-   accounts are Artisan-only. Multiple simulated accounts per instance work.
+7. **Phase 4 / control plane**: Built for Cloud now owns users, ownership, delegated authentication
+   and the dashboard. Five authenticated read-only MCP tools inspect accounts, presets, runs,
+   summaries and truth. Simulator writes remain Artisan-only. See the
+   [upgrade runbook](first-party-upgrade.md) for legacy auth migration and installation enrollment;
+   live unified MCP access requires a separately approved rollout, not just a catalog relabel.
 8. **Delivery throughput**: signing and POSTs now run in queued jobs of 25 events, so they scale
    with queue workers. This was measured only at 30/s.
 
 ## Scalpels catalog status
 
-Sesame is listed in the Scalpels catalog as an **Experimental** Marketplace app
+The original Scalpels catalog listing was an **Experimental** Marketplace app
 (https://scalpels.app/products/sesame, docs at https://scalpels.app/docs/sesame), added in
 artisan-build/scalpels.app #509 and created on production with
 `scalpels:upsert-catalog-app sesame` on 2026-11-06. Experimental means public, a work in
-progress, and installable like any Experimental marketplace listing. The **live** manifest declares
-PHP 8.5, Postgres and the scheduler but no queue, commands or keys, so **an install from
-Scalpels does not work end to end yet**; the listing and its docs say so. scalpels.app PR #514
-replaces it with manifest v7: Postgres, a managed queue, a generated `APP_KEY`,
+progress, and installable like any Experimental marketplace listing. At that point its manifest
+declared PHP 8.5, Postgres and the scheduler but no queue, commands or keys, so an install from
+Scalpels did not work end to end. scalpels.app PR #514 introduced manifest v7: Postgres, a managed queue, a generated `APP_KEY`,
 `migrate --force` after deploy, hibernation after 10 minutes, no scheduler, and push-to-deploy
-off. It is unmerged, and that install path has never run on Laravel Cloud. The items under
-"What is not done" still apply.
+off. Those are historical provisioning findings, not evidence of the current live installation.
+The first-party integration supplies the missing BFC contract and companion local Scalpels
+catalog changes. Neither the catalog/deployment transition nor a live Cloud provisioning test
+has been applied as part of this work. The items under "What is not done" still apply.
 
 ## Operating notes
 

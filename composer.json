@@ -13,11 +13,12 @@
     "license": "MIT",
     "require": {
         "php": "^8.3",
+        "artisan-build/built-for-cloud": "^0.22.0",
         "aws/aws-php-sns-message-validator": "^1.10",
         "aws/aws-sdk-php": "^3.403",
         "laravel/chisel": "^0.1.0",
-        "laravel/fortify": "^1.37.2",
         "laravel/framework": "^13.19",
+        "laravel/mcp": "^1.0",
         "laravel/octane": "^2.23",
         "laravel/tinker": "^3.0",
         "league/flysystem-aws-s3-v3": "^3.35",
