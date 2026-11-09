@@ -50,6 +50,11 @@ So:
 
 ## What a consumer changes
 
+For the manual-only Scalpels flow, Laravel-first instructions and portable SDK settings, start with
+[manual staging-client setup](docs/manual-client-setup.md). It uses dedicated simulator variables
+for reconciliation and standard AWS/mail environment variables for sending, without configuring or
+deploying a consumer automatically. These settings are for staging testing only, never production.
+
 Only the same two calls as production cross the boundary: `SendEmail` going out and signed SNS
 POSTs coming back. A Laravel consumer using the stock `ses-v2` mailer needs:
 
@@ -64,19 +69,16 @@ POSTs coming back. A Laravel consumer using the stock `ses-v2` mailer needs:
 ],
 ```
 
-and a container-bound validator, plus a guard that keeps simulator config out of production:
+For optional SNS callbacks, configure your staging validator for Sesame's certificate host:
 
 ```php
 $this->app->singleton(MessageValidator::class, fn () => new MessageValidator(
     hostNamePattern: config('services.sns.cert_host_pattern') ?? '',
 ));
-
-if (app()->isProduction() && (config('services.ses.endpoint') || config('services.sns.cert_host_pattern'))) {
-    throw new RuntimeException('SES simulator config present in production.');
-}
 ```
 
-`app/CrmHarness` is a working example of the consumer side, including the webhook.
+`app/CrmHarness` is a working example of the consumer side, including the webhook. Its additional
+boot guard is harness-specific, not a requirement for the manual client setup.
 
 ## Run it locally
 
