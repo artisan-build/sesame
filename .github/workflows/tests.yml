@@ -73,4 +73,4 @@ jobs:
       # no commit here to trigger it, so this step can fail on a PR that changed nothing related.
       # Keeping it after the tests means the test signal is still there when that happens.
       - name: Run Security Audit
-        run: composer audit
+        run: composer audit --locked --abandoned=report
