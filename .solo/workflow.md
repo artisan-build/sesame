@@ -1,39 +1,41 @@
-# Workflow — {{FILL: project name}}
+# Workflow — Sesame
 
 Project profile for the `multi-agent-build` skill and for any agent working in this repo. The
 coordinator agent reads this FIRST. Keep it truthful as the project evolves.
 
-> **Scaffolded from the `artisan-build/laravel-nodeless` starter kit.** This repo is NOT the starter
-> kit — never open a PR against `artisan-build/laravel-nodeless` from here.
->
-> Replace every `{{FILL: ...}}` marker below before dispatching any agent. **Ship details** (PR
-> target repo) and **Plan & coordination** (Solo project) are the two that cause real damage if left
-> wrong — an agent will happily open a PR against the wrong repository. Delete this blockquote once
-> the file is accurate.
-
 ## What this is
 
-{{FILL: a short description of the project — same substance as the top of CLAUDE.md. Include the
-non-goals; they are the most useful thing a coordinator can know.}}
+Sesame simulates Amazon SES for staging load runs as a standalone Scalpels app. It accepts SES v2
+`SendEmail` requests with `Content.Raw`, selects a deterministic outcome for each recipient, and sends
+SNS notifications signed in the real format to the consumer's webhook. It retains the ground truth
+so the consumer can reconcile every event. Growth CRM is the first consumer.
+
+Real delivery, rendering, inbox placement and deliverability are outside its scope. Never point
+Sesame at real recipients or real SES. Production apps must refuse to boot with simulator config.
 
 ## Phase & mode
-- phase: {{FILL: greenfield (nothing shipped yet) | building | launched}}
-- default mode: {{FILL: A-autonomous | B-human-merges}}
-- merge_policy: {{FILL: e.g. merge when CI green; no human PR review required}}
-- merge method: {{FILL: e.g. `gh pr merge --squash --auto` — and note whether auto-delete-branch is
-  off on the repo, in which case branches must be deleted manually}}
+- phase: building
+- default mode: A-autonomous
+- merge_policy: merge when CI is green; no human PR review required
+- merge method: `gh pr merge --squash`. Delete-branch-on-merge is off; delete branches manually
+  after confirming the merge landed.
 
 ## Hard gate (must be green before review; verified on the committed SHA, clean tree)
 - command: `composer ready` (ide-helper regen + rector + pint + phpstan + pest + composer audit)
-- extra suites: {{FILL: none, or list them}}
-- monorepo: {{FILL: no | yes — describe the package layout}}
+- extra suites: none. `phpunit.xml` includes the Unit and Feature suites, both using Postgres
+  (`pgsql`, database `sesame_test`); CI supplies a `postgres:18` service.
+- monorepo: no. `app/Sesame` is the simulator. `app/CrmHarness` is a local CRM-compatible harness
+  standing in for Growth; it is outside Sesame's contract and must not grow into a CRM.
 
 ## CI (the merge gate for Mode A)
-- status: {{FILL: verified | unverified — verify before gating merges on it}}
+- status: verified. Main branch protection requires exactly `ci (8.5)` and `quality`, matching
+  the workflow jobs below.
 - minimum bar: CI MUST include (1) testing and (2) static analysis. If it doesn't, don't gate merges
   on CI (Mode A) until fixed.
-- workflows/jobs: `.github/workflows/tests.yml` — `composer stan` (PHPStan/Larastan level 6) then
-  `./vendor/bin/pest`, PHP 8.5 matrix; `.github/workflows/lint.yml` — `composer lint` (Pint).
+- workflows/jobs: `.github/workflows/tests.yml` (workflow `tests`, job `ci`, check `ci (8.5)`):
+  `composer stan` (PHPStan/Larastan level 6), then `./vendor/bin/pest`, then `composer audit`,
+  PHP 8.5 matrix with a `postgres:18` service and database `sesame_test`.
+  `.github/workflows/lint.yml` (workflow `linter`, job/check `quality`): `composer lint` (Pint).
   Inherited from the starter kit; this already meets the testing + static analysis bar.
 - The inherited workflows install free `livewire/flux` and do not configure Flux Pro credentials.
   Flux Pro is optional: a project deliberately opts in by running `php artisan flux:pro`, then adds
@@ -43,13 +45,14 @@ non-goals; they are the most useful thing a coordinator can know.}}
 ## Dependency install (fresh worktree)
 - command: `composer install --no-interaction --prefer-dist`
 - post-install: `cp .env.example .env && php artisan key:generate`
-- tests use in-memory sqlite via `phpunit.xml`; `touch database/database.sqlite` only if running
-  artisan commands that hit the DB.
+- tests use Postgres via `phpunit.xml`, at `127.0.0.1` with database `sesame_test`.
+  Use a disposable local database for worktree commands; no SQLite test database is configured.
 
-## Harness map (role -> runtime; decorrelate model lineages)
-- implementer: {{FILL: runtime + Solo agent_tool_id}}
-- quality reviewer: {{FILL: runtime + Solo agent_tool_id — use a different model lineage}}
-- acceptance judge: {{FILL: runtime + Solo agent_tool_id — different again}}
+## Harness map (role -> runtime)
+
+Resolve implementer, quality reviewer and acceptance judge roles through
+`~/Herd/brain/playbooks/resolve-agent-role.md` against `~/Herd/brain/agents.json`, the fleet-wide
+authority. This profile does not restate runtime bindings or Solo tool ids.
 
 ## Toolchain conformance — the ride-along rule (STANDING, all projects)
 
@@ -70,12 +73,12 @@ catch-up is a huge unreviewable diff.
 
 ## Ship details
 - branch naming: `feat/<slug>` (`fix/<slug>` for fixes, `chore/<slug>` for maintenance)
-- PR target repo: {{FILL: owner/repo — REQUIRED, and note if private}}
-- release / split steps: {{FILL: none, or describe}}
+- PR target repo: `artisan-build/sesame` (public)
+- release / split steps: none
 
 ## Plan & coordination
-- plan location: {{FILL: per-build Solo scratchpad (no standing PRD) | path to a standing PRD}}
-- Solo project: {{FILL: `name` (id) — REQUIRED}}
+- plan location: a per-build Solo scratchpad
+- Solo project: `sesame` (132)
 - run-log: per-build scratchpad named `<branch>-run-log`; coordinator appends at every transition
 
 ## Stack notes / quirks
@@ -96,5 +99,3 @@ catch-up is a huge unreviewable diff.
   `.phpstorm.meta.php` is gitignored (it embeds machine-specific absolute paths); the asymmetry is
   deliberate — do not "fix" it by ignoring all three or committing all three.
 - PHPStan baseline lives in `phpstan-baseline.neon`; keep it shrinking, never grow it silently.
-- {{FILL: project-specific quirks, conventions, and standing preferences — testing style, enum
-  preferences, things a reviewer keeps flagging. Delete this line if there are none yet.}}
