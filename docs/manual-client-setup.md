@@ -25,8 +25,10 @@ php artisan sesame:account:subscribe growth-staging https://staging.example.test
 This queues a `SubscriptionConfirmation`. Re-running the command replaces the pending/confirmed subscription and requires confirmation again. Before registration, configure the staging consumer to:
 
 1. Accept only its expected TopicArn and the exact account certificate URL shown in the bundle. Restrict certificate fetching to that URL, without following redirects; keep TLS verification on.
-2. Verify the SNS message signature and pin the SubscribeURL to the exact Sesame origin and `/sns/{account_id}/` path, with `Action=ConfirmSubscription` and the expected TopicArn. Do not use a permissive certificate-host pattern or disable SNS validation.
-3. Follow the verified SubscribeURL without redirects. Do **not** call the real AWS SNS `ConfirmSubscription` API; Sesame's confirmation endpoint is part of the simulator.
+2. Verify the SNS message signature. Do not use a permissive certificate-host pattern or disable SNS validation.
+3. Confirm the subscription in either of two ways, never against real AWS SNS:
+   - **SDK confirmation.** If the consumer confirms with the AWS SDK's SNS `ConfirmSubscription` (pinned TopicArn plus the message's `Token`, `SubscribeURL` never fetched), point the SNS endpoint at Sesame in staging, for example `AWS_ENDPOINT_URL_SNS=https://<sesame-host>`, with the same simulator access key the SES client uses. Sesame answers `POST /` like the SNS Query API: the access key ID selects the account, and the topic and token must match it. This keeps the production confirmation path unchanged.
+   - **SubscribeURL.** Pin the SubscribeURL to the exact Sesame origin and `/sns/{account_id}/` path, with `Action=ConfirmSubscription` and the expected TopicArn, and follow it without redirects.
 4. Handle duplicate SNS delivery idempotently. Nothing but subscription confirmation is delivered until the subscription is confirmed. Preserve the ordinary AWS validator whenever simulator mode is disabled.
 
 Never register a production webhook or test against real recipients. See the [working local harness](../app/CrmHarness) for signature verification and reconciliation, not as a package to install in a consumer.

@@ -16,6 +16,8 @@ Route::post('/v2/email/outbound-emails', SendEmailController::class);
 
 Route::get('/sns/{account}/cert.pem', [SnsController::class, 'certificate'])->whereUuid('account');
 Route::get('/sns/{account}/', [SnsController::class, 'action'])->whereUuid('account');
+// The SNS Query API endpoint the AWS SDK posts to (ConfirmSubscription only).
+Route::post('/', [SnsController::class, 'api']);
 
 Route::get('/sesame/v1/runs/{run}/truth', [RunController::class, 'truth'])->whereUuid('run');
 Route::get('/sesame/v1/runs/{run}/summary', [RunController::class, 'summary'])->whereUuid('run');

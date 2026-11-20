@@ -11,7 +11,9 @@ use ArtisanBuild\BuiltForCloud\Ownership;
 use ArtisanBuild\BuiltForCloud\OwnershipClaimMinter;
 use ArtisanBuild\BuiltForCloud\SubjectType;
 use ArtisanBuild\BuiltForCloud\User;
+use Aws\Exception\AwsException;
 use Aws\SesV2\SesV2Client;
+use Aws\Sns\SnsClient;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -152,4 +154,41 @@ it('registers a webhook only as a separate staging-confirmed operator command an
     expect($account->fresh()->subscription_status)->toBe('pending');
     $this->get('/sns/'.$account->id.'/?'.http_build_query(['Action' => 'ConfirmSubscription', 'Token' => $account->subscription_token, 'TopicArn' => $settings['topic_arn']]))->assertOk();
     expect($account->fresh()->subscription_status)->toBe('confirmed');
+});
+
+it('confirms through the stock AWS SDK SNS client, choosing the account by access key and checking topic and token', function (): void {
+    $settings = $this->postJson('/sesame/v1/clients', $this->input, $this->headers)->assertCreated()->json();
+    $other = $this->postJson('/sesame/v1/clients', ['name' => 'other-staging'] + $this->input, $this->headers)->assertCreated()->json();
+    foreach (['growth-staging', 'other-staging'] as $name) {
+        $this->artisan('sesame:account:subscribe', ['name' => $name, 'webhook' => 'https://staging.test/'.$name, '--staging-only' => true])->assertSuccessful();
+    }
+    $account = SesameAccount::findOrFail($settings['account_id']);
+    $sns = fn (string $key): SnsClient => new SnsClient([
+        'version' => '2010-03-31', 'region' => $settings['region'], 'endpoint' => $settings['endpoint'], 'retries' => 0,
+        'credentials' => ['key' => $key, 'secret' => 'compatibility-only'],
+        'http_handler' => inProcessHandler($this, true),
+    ]);
+    $refusal = function (string $key, array $input) use ($sns): string {
+        try {
+            $sns($key)->confirmSubscription($input);
+        } catch (AwsException $error) {
+            return (string) $error->getAwsErrorCode();
+        }
+
+        return 'accepted';
+    };
+    $valid = ['TopicArn' => $settings['topic_arn'], 'Token' => $account->subscription_token, 'AuthenticateOnUnsubscribe' => 'true'];
+
+    expect($refusal('AKIAUNKNOWNUNKNOWN77', $valid))->toBe('InvalidClientTokenId')
+        // The other account's key cannot confirm this account's topic, even with the right token.
+        ->and($refusal($other['access_key_id'], $valid))->toBe('NotFound')
+        ->and($refusal($settings['access_key_id'], ['Token' => 'wrong'] + $valid))->toBe('InvalidParameter')
+        ->and($account->fresh()->subscription_status)->toBe('pending');
+
+    $result = $sns($settings['access_key_id'])->confirmSubscription($valid);
+    expect($result['SubscriptionArn'])->toBe($account->subscription_arn)
+        ->and($account->fresh()->subscription_status)->toBe('confirmed')
+        ->and(SesameAccount::findOrFail($other['account_id'])->subscription_status)->toBe('pending');
+    // Replaying a confirmation is harmless, as on SNS.
+    expect($sns($settings['access_key_id'])->confirmSubscription($valid)['SubscriptionArn'])->toBe($account->subscription_arn);
 });
