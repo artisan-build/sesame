@@ -424,6 +424,8 @@ Against the brief, in order of how much it matters next:
    - It confirms subscriptions with `SnsClient::confirmSubscription` against the fixed AWS endpoint.
      Sesame serves the GET `SubscribeURL`, not the SNS query API, so Growth needs to GET the
      validated SubscribeURL (as the brief says) or Sesame needs a `ConfirmSubscription` action.
+     *Since resolved on Sesame's side: `POST /` answers the SNS Query API's `ConfirmSubscription`, so
+     Growth's SDK confirmation works with `AWS_ENDPOINT_URL_SNS` set to Sesame in staging.*
    - `TrialEligibility` only allows `…@simulator.amazonses.com`, while the brief's load contacts
      use `@load.crm.test`. Sesame accepts either. Its forced outcomes match on the local part, so
      Growth's `success+`/`bounce+`/`complaint+` simulator addresses already work, but `ooto+` does

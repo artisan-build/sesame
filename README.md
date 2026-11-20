@@ -143,6 +143,7 @@ php artisan crm:reconcile --run=plateau --wait=1800 --json=report.json
 | `POST /v2/email/outbound-emails` | SES v2 `SendEmail` with `Content.Raw`. The SigV4 access key ID selects the account; signatures are not verified. |
 | `GET /sns/{account}/cert.pem` | The account's signing certificate. |
 | `GET /sns/{account}/?Action=ConfirmSubscription&...` | The `SubscribeURL`. |
+| `POST /` | SNS Query API `ConfirmSubscription`, as the AWS SDK sends it. The SigV4 access key ID selects the account; the topic and token must match. |
 | `GET /sesame/v1/runs/{run}/truth` | Ground truth per `MessageId`, keyset-paginated. `Authorization: Bearer <truth token>`. |
 | `GET /sesame/v1/runs/{run}/summary` | Simulator-side metrics for a run. Same token. |
 | `POST /sesame/v1/runs/{run}/missing` | Classify MessageIds the truth API lacks: `lost` in an ingest buffer, `undrained`, or `unknown`. Same token. |
