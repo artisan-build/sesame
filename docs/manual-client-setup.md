@@ -51,3 +51,21 @@ Names use lowercase letters, digits and dashes, starting with a letter or digit,
 The 201, `Cache-Control: no-store, private` response contains `account_id`, `name`, initial `run_id`, `endpoint`, `region`, `access_key_id`, `secret_access_key`, `truth_token`, `topic_arn`, `certificate_url`, `subscription_status` (`none`), `preset`, and `max_send_rate`. Run ID is initial metadata, not a permanent client environment variable: future runs have new IDs. No signing keys, BfC credentials or subscription tokens are returned. No schema migration is required; existing accounts and runs are unchanged.
 
 401/403 refuses missing, dead, wrong-purpose or non-owner credentials; 409 refuses a name already in use (including a concurrent duplicate); 422 refuses invalid input; 503 means public URL/region configuration needs repair. A timeout, 5xx, or malformed successful response can leave an account created but its one-time result unavailable. Inspect the installation before retrying; do not work around this by automatically inventing a new name. These credentials are not issued through MCP; all five MCP tools remain read-only.
+
+## Optional message viewer: kept bodies and signed links
+
+Sesame normally parses only a message's headers. A send whose MIME headers include `X-Sesame-Keep-Body: 1` also keeps its whole raw message, as received, until `sesame:prune` removes the message after the retention window (7 days). Sends without the header store nothing extra, so load runs pay no cost unless the client asks per message.
+
+To let a client link to kept messages, issue the account a viewer key and give it to the client as a secret:
+
+```sh
+php artisan sesame:account:viewer-key growth-staging
+```
+
+The key is printed once; running the command again replaces it and invalidates links signed with the old one. The client signs links itself, with no call to Sesame:
+
+```text
+{public_url}/sesame/v1/accounts/{account_id}/messages/{message_id}?expires={unix seconds}&signature={hex HMAC-SHA256(viewer_key, "{account_id}\n{message_id}\n{expires}")}
+```
+
+Anyone holding an unexpired link can open that one message; there is no sign-in. The page shows the message at 640 px and 375 px side by side (with Desktop and Mobile toggles), its plain-text part, its headers and its simulated outcome. It behaves like a mail client: links, images, the open pixel and unsubscribe all work as they would for the recipient, so only use it with staging clients. The pixel loads in one pane only, so one view is one open. Scripts in the message never run. Links to messages without a kept body, pruned messages, other accounts' messages, forged signatures and expired links are refused.

@@ -76,7 +76,7 @@ final class IngestBuffer
      * commit it to the buffer. Returns the MessageId, or null when throttled.
      *
      * @param  array<string, mixed>  $account  as returned by AccountDirectory::find()
-     * @param  array<string, mixed>  $send  a, r, t, src, dst, cs, tn, tags, hdr, ch, sz, o, ev
+     * @param  array<string, mixed>  $send  a, r, t, src, dst, cs, tn, tags, hdr, ch, sz, o, ev, and raw when kept
      */
     public static function accept(array $account, array $send): ?string
     {
@@ -292,6 +292,7 @@ final class IngestBuffer
                 'source' => $send['src'], 'destination' => json_encode($send['dst']), 'configuration_set' => $send['cs'],
                 'tenant_name' => $send['tn'], 'tags' => json_encode((object) $send['tags']), 'headers' => json_encode($send['hdr']),
                 'common_headers' => json_encode($send['ch']), 'raw_bytes' => $send['sz'], 'outcomes' => json_encode($send['o']),
+                'raw' => $send['raw'] ?? null,
             ];
             foreach ($send['ev'] as $event) {
                 $due[] = (int) $event['due'];

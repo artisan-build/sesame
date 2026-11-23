@@ -5,6 +5,8 @@ namespace App\Sesame\Ingest;
 /**
  * Reads the parts of an SES v2 SendEmail (Content.Raw) request the simulator
  * uses. Only the MIME header block is decoded and parsed, never the body.
+ * A message whose headers carry `X-Sesame-Keep-Body: 1` asks to keep its
+ * whole raw message, as received, for the message viewer.
  */
 final readonly class SesRequest
 {
@@ -19,6 +21,8 @@ final readonly class SesRequest
         /** @var list<array{name: string, value: string}> */
         public array $headers,
         public int $rawBytes,
+        /** The base64 message as received, only when its headers asked to keep it. */
+        public ?string $keptRaw = null,
     ) {}
 
     /** Access key ID from a SigV4 Authorization header, or null when the header is not SigV4. */
@@ -89,6 +93,7 @@ final readonly class SesRequest
             is_string($payload['FromEmailAddress'] ?? null) ? $payload['FromEmailAddress'] : (is_string($payload['Source'] ?? null) ? $payload['Source'] : null),
             $headers,
             (int) (strlen($raw) * 3 / 4),
+            self::keepsBody($headers) ? $raw : null,
         );
     }
 
@@ -108,6 +113,18 @@ final readonly class SesRequest
         }
 
         return $common;
+    }
+
+    /** @param list<array{name: string, value: string}> $headers */
+    private static function keepsBody(array $headers): bool
+    {
+        foreach ($headers as $header) {
+            if (strcasecmp($header['name'], 'X-Sesame-Keep-Body') === 0 && in_array(strtolower($header['value']), ['1', 'true'], true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

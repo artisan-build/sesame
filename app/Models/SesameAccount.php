@@ -38,7 +38,7 @@ class SesameAccount extends Model
 
     protected $guarded = [];
 
-    protected $hidden = ['private_key', 'truth_token_hash', 'subscription_token'];
+    protected $hidden = ['private_key', 'truth_token_hash', 'subscription_token', 'viewer_key'];
 
     #[\Override]
     protected function casts(): array
@@ -48,6 +48,7 @@ class SesameAccount extends Model
             'timing_overrides' => 'array',
             'sending_paused' => 'boolean',
             'private_key' => 'encrypted',
+            'viewer_key' => 'encrypted',
             'subscription_requested_at' => 'datetime',
             'subscription_confirmed_at' => 'datetime',
         ];
