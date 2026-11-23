@@ -54,7 +54,7 @@ final class SendEmailController
                 'sz' => $send->rawBytes,
                 'o' => array_map(fn (Outcome $o): array => ['k' => $o->kind, 's' => $o->subType], $outcomes),
                 'ev' => EventPlan::for($acceptedMs, $outcomes),
-            ]);
+            ] + ($send->keptRaw === null ? [] : ['raw' => $send->keptRaw]));
             if ($messageId === null) {
                 throw SesError::throttled();
             }

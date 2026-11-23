@@ -66,6 +66,9 @@ class LegacyAuthUpgradeTest extends TestCase
             '2026_11_06_000001_create_sesame_tables.php',
             '2026_11_06_000002_create_crm_harness_tables.php',
             '2026_11_06_000003_move_sesame_onto_managed_resources.php',
+            // Later simulator-only migrations, independent of auth, belong in the fixture too,
+            // so the upgrade under test stays the auth transition (and rollback --step 1 targets it).
+            '2026_11_23_000001_add_kept_message_bodies.php',
         ] as $filename) {
             $paths[] = database_path('migrations/'.$filename);
         }

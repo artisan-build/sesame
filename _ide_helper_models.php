@@ -38,6 +38,7 @@ namespace App\Models{
  * @property \Carbon\CarbonImmutable|null $subscription_confirmed_at
  * @property \Carbon\CarbonImmutable|null $created_at
  * @property \Carbon\CarbonImmutable|null $updated_at
+ * @property string|null $viewer_key
  * @property-read \App\Models\SesameRun|null $currentRun
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\SesameRun> $runs
  * @property-read int|null $runs_count
@@ -65,6 +66,7 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|SesameAccount whereTopicArn($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|SesameAccount whereTruthTokenHash($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|SesameAccount whereUpdatedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|SesameAccount whereViewerKey($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|SesameAccount whereWebhookUrl($value)
  * @mixin \Eloquent
  */
